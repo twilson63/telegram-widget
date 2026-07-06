@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Telegram Widget Install Review Progress</title><style>body{font:14px/1.55 system-ui,-apple-system,sans-serif;max-width:920px;margin:32px auto;padding:0 16px;color:#182033}h1{border-bottom:2px solid #4f7cff;padding-bottom:8px}.badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700}.done{background:#dcfce7;color:#166534}.progress{background:#dbeafe;color:#1e40af}.block{background:#fee2e2;color:#991b1b}table{border-collapse:collapse;width:100%;margin:12px 0}td,th{border:1px solid #d7dce8;padding:8px;text-align:left}th{background:#f8fafc}code{background:#f3f4f6;border-radius:4px;padding:1px 5px}pre{background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;overflow:auto}</style></head><body>
+<h1>Telegram Widget Install + Bridge Review — Progress</h1>
+<p><strong>Status:</strong> <span class="badge done">complete</span></p>
+<table><tr><th>Step</th><th>Status</th><th>Evidence / notes</th></tr>
+<tr><td>1. Install diagnosis</td><td><span class="badge done">pass</span></td><td><code>~/.hyperdesk/widgets</code> contained <code>hyperdesk.html-preview</code>, <code>tron.crm</code>, <code>tron.preview</code>, <code>tron.terminal</code>; <code>tom.telegram</code> was missing.</td></tr>
+<tr><td>2. Bridge diagnosis</td><td><span class="badge done">pass</span></td><td>PID 82808 listening on <code>127.0.0.1:18765</code>; cwd is <code>/Users/tron/desk-projects/tg-widget</code>; WS status reported running.</td></tr>
+<tr><td>3. Manifest/permission fix</td><td><span class="badge done">pass</span></td><td><code>hyperdesk.extension.json</code> now uses <code>agent.dispatch</code>, <code>command.run</code>, <code>navigator.open</code>. Removed unused <code>secrets.read:telegram</code>.</td></tr>
+<tr><td>4. Widget bridge fix</td><td><span class="badge done">pass</span></td><td><code>ui/index.html</code> now handles WebSocket <code>telegram:message</code>, fixes async <code>agent.dispatch</code>, unregisters event handlers correctly, and avoids token env/argv.</td></tr>
+<tr><td>5. Daemon fix</td><td><span class="badge done">pass</span></td><td><code>scripts/telegram-bridge.cjs</code> v0.2.0 starts in <code>--widget-managed</code> mode, waits for <code>bridge:configure</code>, binds to localhost, and avoids token logging.</td></tr>
+<tr><td>6. Install</td><td><span class="badge done">pass</span></td><td><code>install_widget</code> installed <code>tom.telegram</code> to <code>/Users/tron/.hyperdesk/widgets/tom.telegram</code>, hot-reloaded it, and opened the panel. Runtime files installed: manifest, UI, SDK, bridge, package files. First Start Bridge installs npm deps if absent.</td></tr>
+</table>
+<h2>Validation output</h2>
+<pre>PASS node --check scripts/telegram-bridge.cjs
+PASS node scripts/telegram-bridge.cjs --help
+PASS python3 -m json.tool hyperdesk.extension.json
+PASS node --check /tmp/tg-widget-ui-script.js
+PASS widget-managed WS smoke: {"type":"bridge:status","payload":{"port":18999,"status":"waiting-for-config"}}</pre>
+<h2>Reviewer notes</h2>
+<ul><li>Subagent planner/reviewer unavailable due harness extension path error; manual LFG review used.</li><li>Current old bridge process was observed running from the source checkout. Starting the installed fixed widget will kill stale <code>telegram-bridge.cjs</code> processes before launching the installed copy.</li></ul>
+<h2>Residual risks</h2>
+<ul><li>No real Telegram Bot API round-trip was run because no token was used.</li><li>First bridge start may need network because the installed widget uses <code>package-lock.json</code> and installs npm deps on demand instead of bundling <code>node_modules</code>.</li></ul>
+</body></html>

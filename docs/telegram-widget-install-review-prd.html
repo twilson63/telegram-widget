@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Telegram Widget Install + Bridge Review PRD</title>
+<style>
+body{font:14px/1.55 system-ui,-apple-system,sans-serif;max-width:920px;margin:32px auto;padding:0 16px;color:#182033}h1{border-bottom:2px solid #4f7cff;padding-bottom:8px}h2{color:#315bdc;margin-top:28px}.badge{display:inline-block;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700}.progress{background:#dbeafe;color:#1e40af}.pass{background:#dcfce7;color:#166534}.risk{background:#fee2e2;color:#991b1b}code{background:#f3f4f6;border-radius:4px;padding:1px 5px}table{border-collapse:collapse;width:100%;margin:12px 0}td,th{border:1px solid #d7dce8;padding:8px;text-align:left}th{background:#f8fafc}pre{background:#111827;color:#e5e7eb;border-radius:8px;padding:12px;overflow:auto}
+</style>
+</head>
+<body>
+<h1>Telegram Widget Install + Bridge Review</h1>
+<p><strong>Status:</strong> <span class="badge progress">implementation review</span></p>
+
+<h2>Project-specific definition</h2>
+<p>“Installing the widget” means HyperDesk has a validated widget manifest and required assets under <code>~/.hyperdesk/widgets/tom.telegram/</code>, so <strong>View → Widgets → Telegram</strong> can load the sandboxed right-panel iframe. It does not mean merely keeping a source checkout in <code>~/desk-projects/tg-widget</code>.</p>
+<p>“Bridge running” means a local Node daemon is listening on <code>127.0.0.1:18765</code>, is configured with a Telegram bot token, and routes Telegram text to the widget over WebSocket. A listening daemon alone is insufficient if the widget is not installed or if the widget ignores the daemon’s <code>telegram:message</code> events.</p>
+
+<h2>Goals</h2>
+<ul>
+<li>Find why the widget is not appearing/installing in HyperDesk.</li>
+<li>Verify whether the bridge process is running and which copy it is running from.</li>
+<li>Fix bridge/widget integration bugs that would make a running bridge look connected but not dispatch messages.</li>
+<li>Preserve token privacy: no token in command line, process list, logs, or chat.</li>
+</ul>
+
+<h2>Non-goals</h2>
+<ul><li>No Telegram live-token test without the user’s bot token.</li><li>No public hosting or webhook mode.</li><li>No broad HyperDesk app-source changes.</li></ul>
+
+<h2>Research evidence</h2>
+<ul>
+<li>Read <code>widgets.md</code>: widgets must live under <code>~/.hyperdesk/widgets/</code> and bridge calls require declared permissions.</li>
+<li>Local check showed <code>~/.hyperdesk/widgets/tom.telegram</code> did not exist.</li>
+<li><code>lsof</code> showed a Node bridge listening on <code>127.0.0.1:18765</code>, PID 82808, cwd <code>/Users/tron/desk-projects/tg-widget</code>.</li>
+<li>WebSocket smoke check returned <code>{"type":"bridge:status","payload":{"port":18765,"status":"running"}}</code>.</li>
+</ul>
+
+<h2>Plan and acceptance criteria</h2>
+<table>
+<tr><th>Step</th><th>Acceptance criteria</th><th>Evidence</th></tr>
+<tr><td>1. Install diagnosis</td><td>Determine whether widget is installed in HyperDesk user widget directory.</td><td><code>ls ~/.hyperdesk/widgets</code>; expected/actual folder path.</td></tr>
+<tr><td>2. Bridge diagnosis</td><td>Confirm whether bridge is listening and identify source cwd.</td><td><code>lsof -iTCP:18765</code>, <code>lsof -p PID -d cwd</code>, WebSocket status.</td></tr>
+<tr><td>3. Manifest/permission fix</td><td>Manifest contains only supported permissions used by code.</td><td>JSON validation and docs check.</td></tr>
+<tr><td>4. Widget bridge fix</td><td>Widget handles daemon <code>telegram:message</code> WebSocket events, starts/stops daemon safely, and streams agent deltas only on <code>done</code>.</td><td>JS syntax check; code review.</td></tr>
+<tr><td>5. Daemon fix</td><td>Daemon can start in widget-managed mode without token in env/argv and reports waiting-for-config over localhost WS.</td><td><code>node --check</code>; widget-managed WS smoke.</td></tr>
+<tr><td>6. Install with HyperDesk installer</td><td>Use <code>install_widget</code> with manifest and runtime files; widget appears under View → Widgets.</td><td>Installer result, or blocker if approval/tool rejects.</td></tr>
+</table>
+
+<h2>Validation commands</h2>
+<pre>node --check scripts/telegram-bridge.cjs
+node scripts/telegram-bridge.cjs --help
+python3 -m json.tool hyperdesk.extension.json
+node --check /tmp/tg-widget-ui-script.js
+TELEGRAM_WS_PORT=18999 node scripts/telegram-bridge.cjs --widget-managed # smoke with WS client</pre>
+
+<h2>Final acceptance target</h2>
+<p>Root cause is explained, integration bugs are repaired, validation is green, and the widget is installed or the remaining blocker is explicit.</p>
+</body>
+</html>

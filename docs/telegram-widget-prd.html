@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram Widget PRD</title>
+<style>
+  body { font: 14px/1.6 system-ui, -apple-system, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #1a1a2e; }
+  h1 { font-size: 1.8rem; border-bottom: 2px solid #4361ee; padding-bottom: 0.4rem; }
+  h2 { font-size: 1.3rem; color: #4361ee; margin-top: 2rem; }
+  h3 { font-size: 1.1rem; color: #333; margin-top: 1.5rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 0.5rem 0.75rem; text-align: left; }
+  th { background: #f0f0f5; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+  .badge-draft { background: #fff3cd; color: #856404; }
+  .badge-medium { background: #fde2e2; color: #721c24; }
+  .badge-high { background: #f5c6cb; color: #721c24; }
+  .badge-pass { background: #d4edda; color: #155724; }
+  .badge-fail { background: #f8d7da; color: #721c24; }
+  .badge-uncertain { background: #fff3cd; color: #856404; }
+  .badge-in { background: #cce5ff; color: #004085; }
+  .badge-out { background: #e2e3e5; color: #383d41; }
+  code { background: #f4f4f8; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+  .criteria ul { padding-left: 1.5rem; }
+  pre { background: #1a1a2e; color: #eef; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85em; }
+  .rubric td:first-child { font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>Telegram Widget — Product Requirements Document</h1>
+
+<p><strong>Status:</strong> <span class="badge badge-draft">Draft</span>
+<strong>Author:</strong> HyperDesk Agent
+<strong>Type:</strong> Widget + Bridge Daemon
+<strong>Distribution:</strong> ZenBin Install
+<strong>Risk:</strong> <span class="badge badge-medium">Medium</span></p>
+
+<p><strong>Source PRD:</strong> <a href="https://zenbin.org/p/telegram-widget-prd">zenbin.org/p/telegram-widget-prd</a></p>
+
+<h2>Definition</h2>
+<p>A <strong>HyperDesk Telegram Widget</strong> is a user-installable widget that pairs a sandboxed HTML chat UI (right panel) with a local Telegram bridge daemon (Node.js + grammy). The daemon polls the Telegram Bot API and relays messages to/from HyperDesk's agent dispatch system via WebSocket. Users interact with their Pi agent sessions from Telegram; the widget provides live visibility and configuration.</p>
+
+<p><strong>Not</strong> a bot platform, a multi-user service, or a hosted SaaS. Every installation is fully independent, per-user, and runs entirely on the user's machine.</p>
+
+<h2>Goals</h2>
+<ul>
+  <li>Users can chat with their HyperDesk Pi agent from Telegram</li>
+  <li>Widget provides a live chat view, config, and status</li>
+  <li>Zero-install dependency model — grammy bundled with the widget</li>
+  <li>Shareable via ZenBin for any HyperDesk user to install</li>
+</ul>
+
+<h2>Non-Goals</h2>
+<ul>
+  <li>Webhook mode (polling only)</li>
+  <li>File/media sharing between Telegram and HyperDesk</li>
+  <li>Voice messages or Telegram voice notes</li>
+  <li>Persistent message history across restarts</li>
+  <li>Auto-update system</li>
+</ul>
+
+<h2>Constraints &amp; Security</h2>
+<ul>
+  <li><strong>Bot token</strong> stored in HyperDesk profile secrets; never logged or echoed</li>
+  <li><strong>Chat ID allowlist</strong> validates incoming messages before forwarding</li>
+  <li><strong>WebSocket binds to 127.0.0.1 only</strong> — never exposed to network</li>
+  <li><strong>No cross-user data leakage</strong> — zero shared state between installations</li>
+  <li><strong>command.run requires approval</strong> — mitigation: session-wide allow for bridge command</li>
+  <li><strong>Telegram 4096 char limit</strong> — bridge splits long responses at paragraph boundaries</li>
+</ul>
+
+<h2>Resolved Open Questions</h2>
+<ol>
+  <li><strong>Conversation memory:</strong> Yes — bridge maintains history, includes it in each <code>agent.dispatch</code> prompt</li>
+  <li><strong>Streaming approach:</strong> Send chunks — new message per chunk (simpler, noisier)</li>
+  <li><strong>Multi-chat support:</strong> Yes — v2 scope (multi-user)</li>
+  <li><strong>Command routing:</strong> Agent — Telegram commands dispatched to the agent, not handled by bridge</li>
+</ol>
+
+<h2>Architecture</h2>
+<pre>
+Telegram ──Bot API──→ Telegram Bridge Daemon (Node.js + grammy)
+                          │
+                          │  WebSocket (localhost:18765)
+                          │
+                    HyperDesk Widget (right panel)
+                          │
+                          │  widget.agent.dispatch()
+                          │
+                    Pi Agent (background session)
+</pre>
+
+<h2>Step Plan</h2>
+
+<h3>Step 1: Manifest + Widget Skeleton</h3>
+<div class="criteria">
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+  <li><code>hyperdesk.extension.json</code> with correct schema, id, name, permissions (<code>agent.dispatch</code>, <code>command.run</code>, <code>secrets.read:telegram</code>), widget declaration (right-panel, entry point, toggle command)</li>
+  <li><code>ui/index.html</code> basic skeleton with three tabs (Chat, Config, Status)</li>
+  <li>SDK files included: <code>ui/hyperdesk-widget.js</code>, <code>ui/hyperdesk-widget.d.ts</code></li>
+</ul>
+<p><strong>Evidence:</strong> Manifest validates against HyperDesk widget schema; file structure matches spec</p>
+</div>
+
+<h3>Step 2: Bridge Daemon (telegram-bridge.cjs)</h3>
+<div class="criteria">
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+  <li>Node.js process using grammy for Telegram Bot API long-polling</li>
+  <li>WebSocket server on localhost (configurable port, auto-increment on conflict)</li>
+  <li>Commands: <code>/start</code>, <code>/stop</code>, <code>/status</code>, <code>/help</code></li>
+  <li>Any non-command text forwarded to widget via WebSocket</li>
+  <li>Chat ID allowlist validation (silently drops unmatched)</li>
+  <li>Error handling: invalid token, rate limit backoff, WebSocket reconnect (5s), port conflict</li>
+  <li><code>package.json</code> with grammy + all transitive deps bundled</li>
+</ul>
+<p><strong>Evidence:</strong> <code>node scripts/telegram-bridge.cjs --help</code> runs; grammy import resolves from bundled node_modules</p>
+</div>
+
+<h3>Step 3: Widget UI — Chat Tab</h3>
+<div class="criteria">
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+  <li>Telegram-styled message bubbles (blue right for agent, gray left for user)</li>
+  <li>Timestamps on messages</li>
+  <li>"Agent is typing..." indicator while streaming</li>
+  <li>Auto-scroll to bottom on new messages</li>
+  <li>Receives incoming Telegram messages via <code>widget.onCommand</code></li>
+  <li>Dispatches agent messages via <code>widget.agent.dispatch()</code></li>
+  <li>Streams agent output (hyperdesk:event) to bridge via WebSocket</li>
+</ul>
+<p><strong>Evidence:</strong> Widget loads in HyperDesk panel; tabs render; theme tokens applied</p>
+</div>
+
+<h3>Step 4: Widget UI — Config + Status Tabs</h3>
+<div class="criteria">
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+  <li>Config tab: Bot Token (password input), Chat ID (optional, allowlist), Start Bridge / Stop Bridge buttons</li>
+  <li>Status tab: bridge process info, last message timestamp, event log (in/out counts)</li>
+  <li>Connection status indicator (running / stopped / error)</li>
+  <li>Config persists across widget reloads (HyperDesk settings API)</li>
+  <li>Start/Stop buttons call <code>command.run</code> with correct arguments and secret env injection</li>
+</ul>
+<p><strong>Evidence:</strong> Config form renders; start triggers approval prompt with correct command</p>
+</div>
+
+<h3>Step 5: Data Flow Integration</h3>
+<div class="criteria">
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+  <li><strong>Incoming:</strong> Telegram → bridge → WebSocket → widget.onCommand → widget.agent.dispatch()</li>
+  <li><strong>Outgoing:</strong> agent dispatch → hyperdesk:event deltas → widget collects → WebSocket → bridge → Telegram sendMessage/editMessageText per chunk</li>
+  <li>Conversation history maintained in bridge, prepended to each dispatch prompt</li>
+  <li>Round-trip: message sent to bot appears in widget chat view</li>
+  <li>Bridge survives widget page reload (daemon is independent process)</li>
+</ul>
+<p><strong>Evidence:</strong> Full end-to-end test: message on Telegram → appears in widget → agent responds → chunked back to Telegram</p>
+</div>
+
+<h3>Step 6: README + Distribution Artifacts</h3>
+<div class="criteria">
+<p><strong>Acceptance criteria:</strong></p>
+<ul>
+  <li><code>README.md</code> with install steps, first-run config, permission explanations, troubleshooting</li>
+  <li>File structure matches spec (all files in place)</li>
+  <li>Packageable with <code>scripts/package-widget.cjs</code> (if available) or manual bundle check</li>
+  <li>File digests (SHA-256) included in README for verification</li>
+</ul>
+<p><strong>Evidence:</strong> README is complete; all required files exist; bundle would package cleanly</p>
+</div>
+
+<h2>LLM-as-Judge Rubric</h2>
+<table class="rubric">
+  <tr><th>Area</th><th>Required Judgment</th></tr>
+  <tr><td>Correctness</td><td>Solves the Telegram bridge problem without regressions</td></tr>
+  <tr><td>Security/Privacy</td><td>Bot token never logged; WebSocket localhost-only; chat ID allowlist enforced</td></tr>
+  <tr><td>Simplicity</td><td>Cohesive, idiomatic, no over-engineering</td></tr>
+  <tr><td>Taste</td><td>UI feels polished, Telegram-native, restrained</td></tr>
+  <tr><td>Originality</td><td>Avoids generic widget template feel</td></tr>
+  <tr><td>Maintainability</td><td>Future contributors can extend the bridge UI</td></tr>
+</table>
+
+<h2>Final Acceptance</h2>
+<p>All six steps pass their criteria. No blocking reviewer findings. Taste score ≥ 4.</p>
+
+</body>
+</html>

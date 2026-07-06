@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "tom.telegram",
+  "name": "Telegram",
+  "version": "0.1.0",
+  "permissions": [
+    "agent.dispatch",
+    "command.run",
+    "navigator.open"
+  ],
+  "contributes": {
+    "widgets": [
+      {
+        "id": "telegram",
+        "title": "Telegram",
+        "slot": "right-panel",
+        "entry": "ui/index.html",
+        "command": "tom.telegram.toggle",
+        "sandbox": true,
+        "defaultOpen": false,
+        "preferredWidth": 400
+      }
+    ],
+    "commands": [
+      {
+        "id": "tom.telegram.toggle",
+        "title": "Toggle Telegram Widget",
+        "scope": "global-window",
+        "when": "activeSession"
+      }
+    ]
+  }
+}

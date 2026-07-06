@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram Widget — Progress</title>
+<style>
+  body { font: 14px/1.6 system-ui, -apple-system, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #1a1a2e; }
+  h1 { font-size: 1.5rem; border-bottom: 2px solid #4361ee; padding-bottom: 0.4rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ddd; padding: 0.5rem 0.75rem; text-align: left; }
+  th { background: #f0f0f5; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+  .badge-planned { background: #e2e3e5; color: #383d41; }
+  .badge-progress { background: #cce5ff; color: #004085; }
+  .badge-complete { background: #d4edda; color: #155724; }
+  .badge-blocked { background: #f8d7da; color: #721c24; }
+  .log { font-family: monospace; font-size: 0.85em; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<h1>Telegram Widget — Progress Log</h1>
+
+<h2>Checklist</h2>
+<table>
+  <tr><th>Step</th><th>Status</th></tr>
+  <tr><td>1. Manifest + Widget Skeleton</td><td><span class="badge badge-complete">done</span></td></tr>
+  <tr><td>2. Bridge Daemon</td><td><span class="badge badge-complete">done</span></td></tr>
+  <tr><td>3. Widget UI — Chat Tab</td><td><span class="badge badge-complete">done</span></td></tr>
+  <tr><td>4. Widget UI — Config + Status</td><td><span class="badge badge-complete">done</span></td></tr>
+  <tr><td>5. Data Flow Integration</td><td><span class="badge badge-complete">done</span></td></tr>
+  <tr><td>6. README + Distribution</td><td><span class="badge badge-complete">done</span></td></tr>
+</table>
+
+<h2>Log</h2>
+<div class="log">
+2026-07-06T00:05Z Plan reviewed manually (planner subagent unavailable)
+2026-07-06T00:12Z Step 1 complete: hyperdesk.extension.json — manifest with agent.dispatch, command.run, secrets.read:telegram permissions
+2026-07-06T00:15Z Step 2 complete: scripts/telegram-bridge.cjs — grammy + WebSocket bridge. Validated: --help exits 0, missing token exits 1
+2026-07-06T00:20Z Step 3+4 complete: ui/index.html — three tabs (Chat/Config/Status), Telegram-style bubbles, theme-aware, SDK connected
+2026-07-06T00:22Z Step 5 complete: WebSocket data flow — telegram:receive → agent.dispatch → bridge response → sendMessage chunks
+2026-07-06T00:25Z Step 6 complete: README.md — setup, commands, troubleshooting, permissions
+2026-07-06T00:26Z All steps complete. Manual implementation review passed.
+</div>
+
+</body>
+</html>

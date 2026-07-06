@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f3f6fb;
+    --surface: #ffffff;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --border: #d8e0ea;
+    --accent: #2aabee;
+    --accent-light: #1b95d0;
+    --bubble-user: #dff3ff;
+    --bubble-agent: #ffffff;
+    --bubble-agent-text: #0f172a;
+    --danger: #dc2626;
+    --success: #16a34a;
+    --warning: #d97706;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font: 13px/1.4 system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tab {
+    padding: 8px 16px;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+    user-select: none;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Content */
+  .content { flex: 1; overflow: hidden; position: relative; }
+  .tab-content {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .tab-content.active { display: flex; }
+
+  /* === Chat Tab === */
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .chat-messages::-webkit-scrollbar { width: 6px; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .msg { max-width: 85%; word-wrap: break-word; animation: msgIn 0.2s ease; }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } }
+
+  .msg-user {
+    align-self: flex-end;
+    background: var(--bubble-user);
+    color: var(--text);
+    padding: 8px 12px;
+    border-radius: 12px 12px 2px 12px;
+    font-size: 13px;
+  }
+  .msg-agent {
+    align-self: flex-start;
+    background: var(--bubble-agent);
+    color: var(--bubble-agent-text);
+    padding: 8px 12px;
+    border-radius: 12px 12px 12px 2px;
+    font-size: 13px;
+  }
+  .msg-time {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    text-align: right;
+    padding: 0 4px;
+  }
+  .msg-agent .msg-time { text-align: left; }
+  .msg-error {
+    align-self: center;
+    color: var(--danger);
+    font-size: 12px;
+    padding: 4px 12px;
+  }
+
+  .typing-indicator {
+    align-self: flex-start;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: italic;
+    padding: 4px 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .typing-dots span {
+    display: inline-block;
+    width: 4px; height: 4px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    animation: dotPulse 1.2s infinite;
+  }
+  .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dotPulse { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+  .status-bar {
+    flex-shrink: 0;
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .status-dot.running { background: var(--success); }
+  .status-dot.error { background: var(--danger); }
+
+  /* === Config Tab === */
+  .config-panel {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+  }
+  .config-field label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .config-field input {
+    width: 100%;
+    padding: 8px 12px;
+    background: #f7f7f8;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    color: #111827;
+    font-size: 13px;
+    font-family: monospace;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .config-field input:focus { border-color: var(--accent); }
+  .config-field input::placeholder { color: #6b7280; opacity: 0.8; }
+
+  .btn-row { display: flex; gap: 8px; margin-top: 4px; }
+  .btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-start { background: var(--accent); color: #fff; }
+  .btn-start:hover:not(:disabled) { background: var(--accent-light); }
+  .btn-stop { background: var(--danger); color: #fff; }
+  .btn-stop:hover:not(:disabled) { background: #c0392b; }
+
+  .config-status {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .config-status.stopped { background: rgba(136,144,176,0.15); color: var(--text-muted); }
+  .config-status.running { background: rgba(78,203,113,0.15); color: var(--success); }
+  .config-status.pending { background: rgba(217,119,6,0.15); color: var(--warning); }
+  .config-status.error { background: rgba(231,76,94,0.15); color: var(--danger); }
+
+  /* === Inline approvals === */
+  #approvalBar {
+    flex: 0 0 auto;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid #f1c56c;
+    background: #fff7e6;
+    color: #713f12;
+    font-size: 12px;
+    box-shadow: 0 -2px 8px rgba(15,23,42,0.08);
+    animation: approvalFlash 0.35s ease;
+  }
+  #approvalBar.show { display: flex; }
+  @keyframes approvalFlash { 0% { background: #ffedd5; } 100% { background: #fff7e6; } }
+  #approvalBar .approval-summary { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #approvalBar .approval-tool { font-weight: 700; color: var(--warning); }
+  #approvalBar button {
+    flex: 0 0 auto;
+    border: 1px solid #f1c56c;
+    border-radius: 6px;
+    padding: 5px 10px;
+    background: #fff;
+    color: #713f12;
+    font: 11px system-ui, sans-serif;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  #approvalBar .approval-approve { background: #dcfce7; border-color: #86efac; color: #166534; }
+  #approvalBar .approval-deny { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+  #approvalBar .approval-all { color: #92400e; }
+
+  /* === Status Tab === */
+  .status-panel {
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .stat-row .label { color: var(--text-muted); }
+  .stat-row .value { color: var(--text); font-family: monospace; }
+  .event-log {
+    flex: 1;
+    overflow-y: auto;
+    background: var(--surface);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    max-height: 300px;
+  }
+  .event-log::-webkit-scrollbar { width: 4px; }
+  .event-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .log-entry { padding: 2px 0; line-height: 1.5; }
+  .log-entry .ts { color: var(--text-muted); opacity: 0.6; }
+  .log-entry.incoming { color: #a0c4ff; }
+  .log-entry.outgoing { color: #88e0a0; }
+  .log-entry.error { color: var(--danger); }
+  .log-entry.info { color: var(--text-muted); }
+
+  /* Help text */
+  .help-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    padding: 8px 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" data-tab="chat">Chat</div>
+  <div class="tab" data-tab="config">Config</div>
+  <div class="tab" data-tab="status">Status</div>
+</div>
+
+<!-- Content -->
+<div class="content">
+
+  <!-- Chat Tab -->
+  <div class="tab-content active" id="tab-chat">
+    <div class="chat-messages" id="chatMessages"></div>
+    <div class="status-bar">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Stopped</span>
+      <span style="margin-left:auto" id="messageCount">0 messages</span>
+    </div>
+  </div>
+
+  <!-- Config Tab -->
+  <div class="tab-content" id="tab-config">
+    <div class="config-panel">
+      <div class="config-status stopped" id="configStatus">Bridge stopped</div>
+
+      <div class="config-field">
+        <label>Bot Token</label>
+        <input type="password" id="botToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+        <div class="help-text">Get from <a href="https://t.me/BotFather" id="botFatherLink" style="color:var(--accent)">@BotFather</a> on Telegram</div>
+      </div>
+
+      <div class="config-field">
+        <label>Chat ID (optional allowlist)</label>
+        <input type="text" id="chatId" placeholder="Leave blank to use from /start" />
+        <div class="help-text">Restricts which Telegram chats can use the bot. Leave blank for permissive mode (first user sets it).</div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-start" id="btnStart" onclick="startBridge()">Start Bridge</button>
+        <button class="btn btn-stop" id="btnStop" onclick="stopBridge()" disabled>Stop Bridge</button>
+      </div>
+
+      <div class="help-text">
+        The bridge daemon runs as a local Node.js process. Each start triggers an approval prompt — configure session-wide "always allow" after the first start to skip prompts.
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Tab -->
+  <div class="tab-content" id="tab-status">
+    <div class="status-panel">
+      <div class="stat-row">
+        <span class="label">Bridge process</span>
+        <span class="value" id="statProcess">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="label">WebSocket port</span>
+        <span class="value" id="statPort">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="label">Uptime</span>
+        <span class="value" id="statUptime">—</span>
+      </div>
+      <div class="stat-row">
+        <span class="label">Messages received</span>
+        <span class="value" id="statReceived">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="label">Messages sent</span>
+        <span class="value" id="statSent">0</span>
+      </div>
+      <div class="stat-row">
+        <span class="label">Last message</span>
+        <span class="value" id="statLastMsg">—</span>
+      </div>
+
+      <label style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:8px">Event Log</label>
+      <div class="event-log" id="eventLog"></div>
+    </div>
+  </div>
+</div>
+
+<div id="approvalBar" role="alert" aria-live="polite">
+  <span class="approval-summary"><span class="approval-tool" id="approvalTool">approval</span> <span id="approvalSummary">Command approval requested</span></span>
+  <button class="approval-all" id="approvalAll" title="Approve this and future local command.run requests for this session">approve all</button>
+  <button class="approval-deny" id="approvalDeny">Deny</button>
+  <button class="approval-approve" id="approvalApprove">Approve</button>
+</div>
+
+<script src="./hyperdesk-widget.js"></script>
+<script>
+(function() {
+  "use strict";
+
+  // ── State ──
+  const widget = HyperDeskWidget.connect();
+  let ws = null;
+  let wsRetryTimer = null;
+  let agentDispatchId = null;
+  let agentBuffer = "";
+  let isStreaming = false;
+  let pendingBridgeConfig = null;
+  let autoApproveCommands = false;
+  let configState = { running: false, desired: false, status: "stopped", token: "", chatId: "", activeChatId: "", port: 18765 };
+  let msgCount = 0;
+  let receivedCount = 0;
+  let sentCount = 0;
+  let lastMsgTime = null;
+  let eventTypeCounters = { incoming: 0, outgoing: 0, error: 0, info: 0 };
+  let uptimeStart = null;
+
+  // ── Tab Switching ──
+  document.querySelectorAll(".tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+      tab.classList.add("active");
+      document.getElementById("tab-" + tab.dataset.tab).classList.add("active");
+    });
+  });
+
+  // ── Theme ──
+  // Keep this widget in a stable light Telegram-style palette.
+  // HyperDesk may restart in dark mode; inheriting those tokens made the panel hard to read.
+  widget.onTheme(() => {});
+
+  // ── Helpers ──
+  function ts() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+  function timestamp() { return new Date().toISOString(); }
+
+  function addMessage(text, type) {
+    const container = document.getElementById("chatMessages");
+    const div = document.createElement("div");
+    div.className = "msg " + (type === "agent" ? "msg-agent" : type === "error" ? "msg-error" : "msg-user");
+    div.textContent = text;
+
+    const timeDiv = document.createElement("div");
+    timeDiv.className = "msg-time";
+    timeDiv.textContent = ts();
+    div.appendChild(timeDiv);
+
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    msgCount++;
+    document.getElementById("messageCount").textContent = msgCount + " messages";
+  }
+
+  function showTyping(show) {
+    let el = document.getElementById("typingIndicator");
+    if (show) {
+      if (el) return;
+      el = document.createElement("div");
+      el.id = "typingIndicator";
+      el.className = "typing-indicator";
+      el.innerHTML = 'Agent is typing<span class="typing-dots"><span></span><span></span><span></span></span>';
+      document.getElementById("chatMessages").appendChild(el);
+    } else {
+      if (el) el.remove();
+    }
+  }
+
+  function updateConnectionStatus(status) {
+    const dot = document.getElementById("statusDot");
+    const text = document.getElementById("statusText");
+    const configStatus = document.getElementById("configStatus");
+
+    dot.className = "status-dot" + (status === "running" ? " running" : status === "error" ? " error" : "");
+    text.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+
+    configStatus.className = "config-status " + status;
+    configStatus.textContent = status === "running" ? "Bridge running" : status === "error" ? "Bridge error — " + configState.lastError : "Bridge stopped";
+  }
+
+  function logEvent(type, msg) {
+    eventTypeCounters[type] = (eventTypeCounters[type] || 0) + 1;
+    const log = document.getElementById("eventLog");
+    const entry = document.createElement("div");
+    entry.className = "log-entry " + type;
+    entry.innerHTML = `<span class="ts">[${timestamp().slice(11,19)}]</span> ${msg}`;
+    log.appendChild(entry);
+    log.scrollTop = log.scrollHeight;
+
+    // Update stats
+    document.getElementById("statReceived").textContent = eventTypeCounters.incoming;
+    document.getElementById("statSent").textContent = eventTypeCounters.outgoing;
+    document.getElementById("statPort").textContent = configState.port;
+    lastMsgTime = new Date().toLocaleTimeString();
+    document.getElementById("statLastMsg").textContent = lastMsgTime;
+  }
+
+  function updateUptime() {
+    if (!uptimeStart) return;
+    const secs = Math.floor((Date.now() - uptimeStart) / 1000);
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    document.getElementById("statUptime").textContent = m + "m " + s + "s";
+  }
+  setInterval(updateUptime, 1000);
+
+  // ── Widget-originated approval handling ──
+  // HyperDesk routes command.run approvals into the iframe as a widget-approval
+  // command. Render Approve/Deny here and post hyperdesk:approval-response back.
+  function respondApproval(id, approved, approveAll) {
+    document.getElementById("approvalBar").classList.remove("show");
+    globalThis.parent.postMessage({
+      type: "hyperdesk:approval-response",
+      id,
+      approved,
+      approveAll: approveAll || ""
+    }, "*");
+    logEvent("info", approved ? (approveAll ? "Approved command and future local commands" : "Approved command") : "Denied command");
+  }
+
+  function showApproval(data) {
+    if (!data || !data.id) return;
+    if (autoApproveCommands) {
+      respondApproval(data.id, true, "local");
+      return;
+    }
+
+    document.getElementById("approvalTool").textContent = data.toolName || "approval";
+    document.getElementById("approvalSummary").textContent = data.summary || "Run local command";
+    const bar = document.getElementById("approvalBar");
+    bar.classList.add("show");
+    bar.style.animation = "none"; void bar.offsetWidth; bar.style.animation = "";
+
+    const id = data.id;
+    document.getElementById("approvalApprove").onclick = () => respondApproval(id, true, "");
+    document.getElementById("approvalDeny").onclick = () => respondApproval(id, false, "");
+    document.getElementById("approvalAll").onclick = () => {
+      autoApproveCommands = true;
+      respondApproval(id, true, "local");
+    };
+
+    const configStatus = document.getElementById("configStatus");
+    configStatus.className = "config-status pending";
+    configStatus.textContent = "Approval needed — use the prompt at the bottom of this widget";
+    logEvent("info", "Approval prompt shown in widget");
+  }
+  widget.onCommand("widget-approval", (data) => showApproval(data));
+
+  // ── WebSocket ──
+  function connectWebSocket() {
+    if (ws && ws.readyState <= WebSocket.OPEN) return;
+    clearTimeout(wsRetryTimer);
+
+    const port = configState.port;
+    ws = new WebSocket("ws://127.0.0.1:" + port);
+
+    ws.onopen = () => {
+      logEvent("info", "Connected to bridge on port " + port);
+      document.getElementById("statProcess").textContent = "connected";
+      updateConnectionStatus("running");
+      configState.running = true;
+      document.getElementById("btnStart").disabled = true;
+      document.getElementById("btnStop").disabled = false;
+
+      if (pendingBridgeConfig) {
+        ws.send(JSON.stringify({ type: "bridge:configure", payload: pendingBridgeConfig }));
+        pendingBridgeConfig = null;
+        logEvent("info", "Sent bridge configuration over localhost WebSocket");
+      }
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const preview = data.payload?.text ? " → " + data.payload.text.slice(0, 40) : "";
+        logEvent("incoming", data.type + preview);
+        receivedCount++;
+
+        if (data.type === "bridge:status") {
+          if (data.payload?.port) configState.port = data.payload.port;
+          if (data.payload?.error) {
+            configState.lastError = data.payload.error;
+            updateConnectionStatus("error");
+            addMessage(data.payload.error, "error");
+          } else if (data.payload?.status === "stopped") {
+            updateConnectionStatus("stopped");
+          } else {
+            configState.lastError = null;
+            updateConnectionStatus("running");
+          }
+          return;
+        }
+
+        if (data.type === "telegram:message" && data.payload?.text) {
+          configState.activeChatId = data.payload.chatId || configState.activeChatId;
+          addMessage(data.payload.text, "user");
+          dispatchToAgent(data.payload.text, data.payload.chatId);
+        }
+      } catch (err) {
+        logEvent("error", "WebSocket parse error: " + err.message);
+      }
+    };
+
+    ws.onerror = () => {
+      logEvent("error", "WebSocket error on port " + port);
+    };
+
+    ws.onclose = () => {
+      logEvent("info", "Bridge disconnected, retrying in 5s...");
+      configState.running = false;
+      if (configState.lastError) {
+        updateConnectionStatus("error");
+      } else {
+        updateConnectionStatus("stopped");
+      }
+      document.getElementById("statProcess").textContent = "disconnected";
+      document.getElementById("btnStart").disabled = false;
+      document.getElementById("btnStop").disabled = true;
+      isStreaming = false;
+      showTyping(false);
+      // Retry after 5 seconds only when the user asked the bridge to run.
+      if (configState.desired) {
+        wsRetryTimer = setTimeout(connectWebSocket, 5000);
+      }
+    };
+  }
+
+  // ── Bridge Control ──
+  window.startBridge = function() {
+    const token = document.getElementById("botToken").value.trim();
+    const chatId = document.getElementById("chatId").value.trim();
+
+    if (!token) { alert("Enter a bot token first."); return; }
+    const port = configState.port;
+    configState.token = token;
+    configState.chatId = chatId;
+    configState.desired = true;
+    pendingBridgeConfig = { token, allowedChats: chatId, port };
+
+    const command = "cd ~/.hyperdesk/widgets/tom.telegram/scripts && if [ ! -d node_modules/grammy ] || [ ! -d node_modules/ws ]; then npm install --omit=dev; fi && (pkill -f '[t]elegram-bridge.cjs' || true) && (nohup node telegram-bridge.cjs --widget-managed >> telegram-bridge.log 2>&1 < /dev/null & echo $!)";
+
+    addMessage("Starting bridge daemon...", "user");
+    logEvent("info", `Starting bridge on port ${port} — approve below when prompted`);
+    document.getElementById("configStatus").className = "config-status pending";
+    document.getElementById("configStatus").textContent = "Waiting for command approval…";
+    document.getElementById("btnStart").disabled = true;
+
+    widget.command.run({
+      command: command,
+      timeoutMs: 120000,
+      reason: "Start the local Telegram bridge daemon; the bot token is sent later over localhost WebSocket, not on the command line."
+    }).then(result => {
+      uptimeStart = Date.now();
+      document.getElementById("statProcess").textContent = "pid—" + Date.now().toString(36);
+      logEvent("info", "Bridge daemon started");
+      connectWebSocket();
+    }).catch(err => {
+      logEvent("error", "Failed to start bridge: " + err.message);
+      configState.lastError = err.message;
+      updateConnectionStatus("error");
+      addMessage("Failed to start: " + err.message, "error");
+      document.getElementById("btnStart").disabled = false;
+    });
+  };
+
+  window.stopBridge = function() {
+    addMessage("Stopping bridge daemon...", "user");
+    logEvent("info", "Stopping bridge daemon");
+    configState.desired = false;
+    pendingBridgeConfig = null;
+    clearTimeout(wsRetryTimer);
+
+    // Stop via WebSocket if connected
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "bridge:stop" }));
+    }
+
+    // Kill the process
+    widget.command.run({
+      command: "pkill -f '[t]elegram-bridge.cjs' || true",
+      reason: "Stop the local Telegram bridge daemon"
+    }).then(() => {
+      if (ws) ws.close();
+      uptimeStart = null;
+      document.getElementById("statUptime").textContent = "—";
+      updateConnectionStatus("stopped");
+      addMessage("Bridge stopped.", "user");
+      logEvent("info", "Bridge daemon stopped");
+    }).catch(err => {
+      logEvent("error", "Stop error: " + err.message);
+      updateConnectionStatus("stopped");
+    });
+  };
+
+  // ── Telegram Commands (via widget.onCommand) ──
+  widget.onCommand("telegram:receive", (data) => {
+    if (data?.type === "telegram:message" && data?.payload?.text) {
+      addMessage(data.payload.text, "user");
+      // Dispatch to agent with conversation history context
+      dispatchToAgent(data.payload.text);
+    }
+  });
+
+  async function dispatchToAgent(userText, chatId) {
+    if (isStreaming) {
+      addMessage("Agent busy — please wait...", "error");
+      return;
+    }
+
+    // Build prompt with conversation history. Keep only short local summaries in the widget.
+    let prompt = userText;
+    if (configState._history && configState._history.length > 0) {
+      const recent = configState._history.slice(-10);
+      const history = recent.map(e => `${e.role}: ${e.text}`).join("\n");
+      prompt = `Previous conversation:\n${history}\n\nNew message: ${userText}`;
+    }
+
+    isStreaming = true;
+    agentBuffer = "";
+    showTyping(true);
+
+    let unsubscribe = null;
+    try {
+      const dispatch = await widget.agent.dispatch(prompt);
+      agentDispatchId = dispatch?.dispatchId;
+      unsubscribe = widget.onAgentEvent((event) => {
+        if (agentDispatchId && event.dispatchId && event.dispatchId !== agentDispatchId) return;
+
+        if (event.event === "delta") {
+          agentBuffer += event.text || "";
+          return;
+        }
+
+        if (event.event === "done") {
+          const agentText = (event.text || agentBuffer || "").trim();
+          if (agentText) {
+            addMessage(agentText, "agent");
+            sendToBridge(agentText, chatId);
+            configState._history = configState._history || [];
+            configState._history.push({ role: "user", text: userText.slice(0, 200) });
+            configState._history.push({ role: "assistant", text: agentText.slice(0, 200) });
+          }
+          cleanupAgentStream(unsubscribe);
+          return;
+        }
+
+        if (event.event === "error") {
+          const message = event.message || event.error || "unknown";
+          const partialText = (agentBuffer || "").trim();
+          const wasTerminated = /terminated|cancelled|canceled|aborted/i.test(message);
+          const notice = wasTerminated
+            ? "Agent run was terminated before completion. Partial response preserved; send a smaller follow-up if you want me to continue."
+            : "Agent error: " + message;
+
+          if (partialText) {
+            const delivered = partialText + "\n\n[" + notice + "]";
+            addMessage(delivered, "agent");
+            sendToBridge(delivered, chatId);
+            configState._history = configState._history || [];
+            configState._history.push({ role: "user", text: userText.slice(0, 200) });
+            configState._history.push({ role: "assistant", text: delivered.slice(0, 200) });
+          } else {
+            addMessage(notice, wasTerminated ? "agent" : "error");
+            sendToBridge(notice, chatId);
+          }
+
+          configState.lastError = message;
+          updateConnectionStatus(wasTerminated ? "running" : "error");
+          cleanupAgentStream(unsubscribe);
+        }
+      });
+    } catch (err) {
+      const message = "Agent dispatch failed: " + err.message;
+      addMessage(message, "error");
+      sendToBridge(message, chatId);
+      configState.lastError = err.message;
+      updateConnectionStatus("error");
+      cleanupAgentStream(unsubscribe);
+    }
+  }
+
+  function cleanupAgentStream(unsubscribe) {
+    if (typeof unsubscribe === "function") unsubscribe();
+    isStreaming = false;
+    agentDispatchId = null;
+    agentBuffer = "";
+    showTyping(false);
+  }
+
+  function sendToBridge(text, chatId) {
+    sentCount++;
+    // Send via WebSocket to bridge
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "telegram:message",
+        payload: { text: text, chatId: chatId || configState.activeChatId || configState.chatId }
+      }));
+      logEvent("outgoing", "→ Telegram: " + text.slice(0, 50).replace(/\n/g, " ") + (text.length > 50 ? "..." : ""));
+    } else {
+      logEvent("error", "Bridge disconnected — message not sent");
+      addMessage("Bridge disconnected — message not delivered", "error");
+    }
+  }
+
+  document.getElementById("botFatherLink")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    widget.navigator.open("https://t.me/BotFather").catch(err => logEvent("error", "Could not open BotFather: " + err.message));
+  });
+
+  // ── Load saved config ──
+  widget.onCommand("config:load", (data) => {
+    if (data?.token) document.getElementById("botToken").value = data.token;
+    if (data?.chatId) document.getElementById("chatId").value = data.chatId;
+  });
+
+  // ── Init ──
+  logEvent("info", "Telegram widget loaded");
+
+})();
+</script>
+</body>
+</html>
