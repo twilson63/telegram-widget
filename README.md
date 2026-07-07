@@ -200,6 +200,11 @@ The bridge maintains the last 20 exchanges in conversation history. If the conve
 - **command.run approval**: Starting the bridge requires approval each session (configurable as always-allow)
 - **No auto-update**: Install new versions manually
 
+
+## Share page
+
+A public share/install page with permissions, install steps, and test info is published at <https://zenbin.org/p/twilson63-telegram-widget>.
+
 ## License
 
 Private use only. Shared via ZenBin for HyperDesk users.
