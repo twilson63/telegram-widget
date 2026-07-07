@@ -349,6 +349,10 @@
         <label>Bot Token</label>
         <input type="password" id="botToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
         <div class="help-text">Get from <a href="https://t.me/BotFather" id="botFatherLink" style="color:var(--accent)">@BotFather</a> on Telegram</div>
+        <div class="help-text" id="tokenStoredRow" style="display:none">
+          ✓ Token remembered by the bridge (user-only file) — leave blank.
+          <a href="#" id="forgetTokenLink" style="color:var(--danger)">Forget token</a>
+        </div>
       </div>
 
       <div class="config-field">
@@ -424,7 +428,7 @@
   let isStreaming = false;
   let pendingBridgeConfig = null;
   let autoApproveCommands = false;
-  let configState = { running: false, desired: false, status: "stopped", operation: null, token: "", chatId: "", activeChatId: "", port: 18765 };
+  let configState = { running: false, desired: false, status: "stopped", operation: null, token: "", chatId: "", activeChatId: "", port: 18765, hasStoredToken: false };
   let msgCount = 0;
   let receivedCount = 0;
   let sentCount = 0;
@@ -459,11 +463,12 @@
   // ── Helpers ──
   function ts() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 
-  // ── Config persistence (localStorage) ──
-  // The bot token and chat ID are remembered across widget reloads so the user
-  // only has to enter them once. localStorage is wrapped in try/catch because
-  // some sandboxed widget origins can throw on storage access; in that case we
-  // silently degrade to "enter each session".
+  // ── Config persistence ──
+  // Only the (non-secret) chat ID lives in localStorage. The bot token is
+  // deliberately NOT persisted here — the bridge daemon remembers it in a
+  // user-only file (~/.hyperdesk/telegram-bridge/config.json, chmod 600), so
+  // the secret never sits in browser-readable storage. localStorage access is
+  // wrapped in try/catch because some sandboxed widget origins throw on it.
   const STORAGE_KEY = "tg.widget.config.v1";
   function readStorage(key) {
     try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -472,29 +477,55 @@
     try { localStorage.setItem(key, value); return true; } catch (_) { return false; }
   }
   function saveConfig() {
-    const token = document.getElementById("botToken").value.trim();
     const chatId = document.getElementById("chatId").value.trim();
-    const payload = JSON.stringify({ token, chatId });
-    if (writeStorage(STORAGE_KEY, payload)) {
-      logEvent("info", "Saved bot config to local storage");
-    } else {
-      logEvent("info", "Local storage unavailable — config not persisted");
-    }
+    writeStorage(STORAGE_KEY, JSON.stringify({ chatId }));
   }
   function loadConfig() {
     const raw = readStorage(STORAGE_KEY);
     if (!raw) return;
     try {
       const cfg = JSON.parse(raw);
-      if (cfg.token && !document.getElementById("botToken").value) {
-        document.getElementById("botToken").value = cfg.token;
-      }
       if (typeof cfg.chatId === "string" && !document.getElementById("chatId").value) {
         document.getElementById("chatId").value = cfg.chatId;
       }
-      logEvent("info", "Restored bot config from local storage");
+      // Migration: older builds kept the token here. Prefill the field once so
+      // the next Start hands it to the bridge (which persists it on disk),
+      // then scrub it from browser storage.
+      if (cfg.token) {
+        if (!document.getElementById("botToken").value) {
+          document.getElementById("botToken").value = cfg.token;
+        }
+        writeStorage(STORAGE_KEY, JSON.stringify({ chatId: cfg.chatId || "" }));
+        logEvent("info", "Bot token moved out of local storage — the bridge will remember it after the next start");
+      }
     } catch (_) { /* ignore malformed entry */ }
   }
+  function updateTokenStoredUI() {
+    const row = document.getElementById("tokenStoredRow");
+    const tokenInput = document.getElementById("botToken");
+    if (configState.hasStoredToken) {
+      row.style.display = "";
+      tokenInput.placeholder = "Remembered by bridge — leave blank";
+    } else {
+      row.style.display = "none";
+      tokenInput.placeholder = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
+    }
+  }
+  window.forgetToken = function() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "bridge:forget-token" }));
+      logEvent("info", "Asked bridge to forget the stored token");
+    } else {
+      widget.command.run({
+        command: "rm -f ~/.hyperdesk/telegram-bridge/config.json",
+        reason: "Delete the bot token remembered by the Telegram bridge"
+      }).then(() => {
+        configState.hasStoredToken = false;
+        updateTokenStoredUI();
+        logEvent("info", "Stored token deleted");
+      }).catch(err => logEvent("error", "Could not delete stored token: " + err.message));
+    }
+  };
   function timestamp() { return new Date().toISOString(); }
 
   function addMessage(text, type) {
@@ -759,6 +790,13 @@
 
         if (data.type === "bridge:status") {
           if (data.payload?.port) configState.port = data.payload.port;
+          if (typeof data.payload?.hasStoredToken === "boolean") {
+            const wasStored = configState.hasStoredToken;
+            configState.hasStoredToken = data.payload.hasStoredToken;
+            // The bridge just took ownership of the token — scrub it from the DOM.
+            if (!wasStored && configState.hasStoredToken) document.getElementById("botToken").value = "";
+            updateTokenStoredUI();
+          }
           if (data.payload?.error) {
             configState.lastError = data.payload.error;
             updateConnectionStatus("error");
@@ -824,11 +862,12 @@
     const token = document.getElementById("botToken").value.trim();
     const chatId = document.getElementById("chatId").value.trim();
 
-    if (!token) { alert("Enter a bot token first."); return; }
+    if (!token && !configState.hasStoredToken) { alert("Enter a bot token first."); return; }
     const port = configState.port;
     configState.token = token;
     configState.chatId = chatId;
     configState.desired = true;
+    // Blank token + stored token → the bridge falls back to its remembered one.
     pendingBridgeConfig = { token, allowedChats: chatId, port };
 
     const command = "cd ~/.hyperdesk/widgets/tom.telegram/scripts && if [ ! -d node_modules/grammy ] || [ ! -d node_modules/ws ]; then npm install --omit=dev; fi && (pkill -f '[t]elegram-bridge.cjs' || true) && (nohup node telegram-bridge.cjs --widget-managed >> telegram-bridge.log 2>&1 < /dev/null & echo $!)";
@@ -1029,12 +1068,14 @@
   });
 
   // ── Init ──
-  // Restore saved bot token / chat ID, then persist on every change.
+  // Restore saved chat ID (token is remembered bridge-side, never here).
   loadConfig();
-  document.getElementById("botToken").addEventListener("change", saveConfig);
-  document.getElementById("botToken").addEventListener("input", saveConfig);
   document.getElementById("chatId").addEventListener("change", saveConfig);
   document.getElementById("chatId").addEventListener("input", saveConfig);
+  document.getElementById("forgetTokenLink").addEventListener("click", (e) => {
+    e.preventDefault();
+    window.forgetToken();
+  });
 
   logEvent("info", "Telegram widget loaded");
 

@@ -17,9 +17,48 @@
 
 const { Bot } = require("grammy");
 const { WebSocketServer } = require("ws");
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
 
 // ── Config ──
 const DEFAULT_PORT = parseInt(process.env.TELEGRAM_WS_PORT || "18765", 10);
+
+// ── Stored config ──
+// The bot token can be remembered between sessions. It lives here — in a
+// user-only file owned by the daemon — rather than in the widget's
+// localStorage, so the secret never sits in browser-readable storage.
+const CONFIG_DIR = process.env.TELEGRAM_BRIDGE_CONFIG_DIR ||
+  path.join(os.homedir(), ".hyperdesk", "telegram-bridge");
+const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
+
+function loadStoredConfig() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    if (cfg && typeof cfg.token === "string" && cfg.token) return cfg;
+  } catch (_) { /* missing or unreadable — no stored config */ }
+  return null;
+}
+
+function storeConfig(token, allowedChatsStr) {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ token, allowedChats: allowedChatsStr || "" }) + "\n", { mode: 0o600 });
+    fs.chmodSync(CONFIG_FILE, 0o600); // mode option is ignored when the file already exists
+    return true;
+  } catch (err) {
+    console.warn("Could not store bridge config:", err.message);
+    return false;
+  }
+}
+
+function clearStoredConfig() {
+  try { fs.unlinkSync(CONFIG_FILE); } catch (_) {}
+}
+
+function hasStoredToken() {
+  return loadStoredConfig() !== null;
+}
 let botToken = process.env.TELEGRAM_BOT_TOKEN || "";
 let allowedChats = parseAllowedChats(process.env.TELEGRAM_ALLOWED_CHATS || "");
 let actualWsPort = DEFAULT_PORT;
@@ -36,6 +75,16 @@ let lastChatId = allowedChats[0] || null;
 const MAX_HISTORY = 20; // last 20 exchanges (40 messages)
 const CHUNK_MAX = 3500; // Telegram limit 4096, leave room for metadata
 
+// Telegram's "typing…" indicator expires after ~5s. While the agent is working
+// on a message, we re-send sendChatAction("typing") on this interval so the
+// user sees the bot is busy before the first response arrives.
+const TYPING_INTERVAL_MS = 4000;
+// Hard cap so a stalled/lost agent run can never leave "typing…" on forever.
+const TYPING_MAX_MS = 60000;
+let typingTimer = null;
+let typingCapTimer = null;
+let typingChatId = null;
+
 // ── CLI flags ──
 const args = process.argv.slice(2);
 const WIDGET_MANAGED = args.includes("--widget-managed");
@@ -49,13 +98,18 @@ Usage:
   node telegram-bridge.cjs --widget-managed
 
 Environment:
-  TELEGRAM_BOT_TOKEN      Bot token from @BotFather (required unless --widget-managed)
-  TELEGRAM_ALLOWED_CHATS  Comma-separated chat IDs for allowlist (optional)
-  TELEGRAM_WS_PORT        WebSocket server port (default: 18765)
+  TELEGRAM_BOT_TOKEN          Bot token from @BotFather (required unless --widget-managed)
+  TELEGRAM_ALLOWED_CHATS      Comma-separated chat IDs for allowlist (optional)
+  TELEGRAM_WS_PORT            WebSocket server port (default: 18765)
+  TELEGRAM_BRIDGE_CONFIG_DIR  Where the remembered token is stored
+                              (default: ~/.hyperdesk/telegram-bridge)
 
 Widget-managed mode starts the localhost WebSocket first and waits for the
 widget to send bridge:configure with the token. This keeps the token out of the
-shell command, approval prompt, process list, and bridge logs.
+shell command, approval prompt, process list, and bridge logs. Once received,
+the token is remembered in a user-only file (chmod 600) under the config dir,
+so later sessions can send bridge:configure without a token. Send
+bridge:forget-token (or pass remember:false in bridge:configure) to opt out.
 
 Commands (on Telegram):
   /start   Connect and start polling
@@ -68,7 +122,7 @@ Commands (on Telegram):
 }
 
 if (args.includes("--version") || args.includes("-v")) {
-  console.log("telegram-bridge v0.2.0");
+  console.log("telegram-bridge v0.3.0");
   process.exit(0);
 }
 
@@ -121,7 +175,7 @@ function setupWebSocket(serverInfo) {
     console.log("Bridge daemon: widget connected");
     ws.send(JSON.stringify({
       type: "bridge:status",
-      payload: { port: actualWsPort, status: bot ? "running" : "waiting-for-config" }
+      payload: { port: actualWsPort, status: bot ? "running" : "waiting-for-config", hasStoredToken: hasStoredToken() }
     }));
 
     ws.on("message", async (data) => {
@@ -145,6 +199,13 @@ function setupWebSocket(serverInfo) {
           return;
         }
 
+        if (msg.type === "bridge:forget-token") {
+          clearStoredConfig();
+          console.log("Bridge daemon: stored token cleared");
+          sendToSocket(ws, { type: "bridge:status", payload: buildStatusPayload(isPolling ? "running" : "stopped") });
+          return;
+        }
+
         if (msg.type === "bridge:ping") {
           ws.send(JSON.stringify({ type: "bridge:status", payload: buildStatusPayload("running") }));
         }
@@ -162,17 +223,27 @@ function setupWebSocket(serverInfo) {
 }
 
 function configureFromWidget(payload, ws) {
-  const token = String(payload.token || "").trim();
-  if (!token) {
-    sendToSocket(ws, { type: "bridge:status", payload: { error: "Bot token missing", port: actualWsPort } });
-    return;
+  let token = String(payload.token || "").trim();
+  let allowedChatsStr = String(payload.allowedChats || "");
+
+  if (token) {
+    // Remember the token daemon-side (user-only file) unless explicitly told not to.
+    if (payload.remember !== false) storeConfig(token, allowedChatsStr);
+  } else {
+    const stored = loadStoredConfig();
+    if (!stored) {
+      sendToSocket(ws, { type: "bridge:status", payload: { error: "Bot token missing", port: actualWsPort, hasStoredToken: false } });
+      return;
+    }
+    token = stored.token;
+    if (!allowedChatsStr) allowedChatsStr = String(stored.allowedChats || "");
   }
 
   botToken = token;
-  allowedChats = parseAllowedChats(payload.allowedChats || "");
+  allowedChats = parseAllowedChats(allowedChatsStr);
   lastChatId = allowedChats[0] || lastChatId;
 
-  sendToSocket(ws, { type: "bridge:status", payload: { status: "configuring", port: actualWsPort } });
+  sendToSocket(ws, { type: "bridge:status", payload: { status: "configuring", port: actualWsPort, hasStoredToken: hasStoredToken() } });
   startBot();
 }
 
@@ -280,6 +351,11 @@ function startBot() {
     history.push({ role: "user", text: userText, chatId: ctx.chat.id });
     if (history.length > MAX_HISTORY * 2) history.splice(0, 2);
 
+    // Show Telegram "typing…" immediately and keep refreshing it while the
+    // agent processes the message. Skipped for slash commands, which get
+    // an instant ctx.reply from the bridge and don't go through the agent.
+    if (!userText.startsWith("/")) startTypingIndicator(ctx.chat.id);
+
     notifyWidget({
       type: "telegram:message",
       payload: { text: userText, chatId: ctx.chat.id }
@@ -308,6 +384,7 @@ function startBot() {
 }
 
 function stopPolling() {
+  stopTypingIndicator();
   if (!bot) return;
   isPolling = false;
   try {
@@ -318,8 +395,46 @@ function stopPolling() {
   }
 }
 
+// ── Typing indicator ──
+// Telegram's chat action "typing" shows a "Bot is typing…" hint in the chat
+// for about five seconds. We send it the moment a real message arrives and
+// refresh it on a timer until the agent's reply is delivered, so the user
+// gets immediate feedback that their message is being handled.
+function startTypingIndicator(chatId) {
+  if (!bot || !isPolling || !chatId) return;
+  stopTypingIndicator();
+  typingChatId = chatId;
+  sendTypingAction(chatId);
+  typingTimer = setInterval(() => {
+    if (!bot || !isPolling) { stopTypingIndicator(); return; }
+    sendTypingAction(typingChatId);
+  }, TYPING_INTERVAL_MS);
+  // Safety cap: even if the agent reply never comes back (widget dropped,
+  // run stalled, etc.), stop refreshing after TYPING_MAX_MS so we don't pin
+  // a "typing…" indicator on the chat forever.
+  typingCapTimer = setTimeout(stopTypingIndicator, TYPING_MAX_MS);
+}
+
+function stopTypingIndicator() {
+  if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
+  if (typingCapTimer) { clearTimeout(typingCapTimer); typingCapTimer = null; }
+  typingChatId = null;
+}
+
+function sendTypingAction(chatId) {
+  if (!bot || !chatId) return;
+  bot.api.sendChatAction(chatId, "typing").catch((err) => {
+    // Non-fatal: typing is best-effort UX, never block the reply on it.
+    const m = String(err?.message || err);
+    if (!/400|chat not found|chat_id invalid/i.test(m)) {
+      console.warn("sendChatAction(typing) failed:", m);
+    }
+  });
+}
+
 // ── Agent Response Handling ──
 async function handleAgentResponse(text, explicitChatId) {
+  stopTypingIndicator();
   msgSent++;
 
   const chatId = explicitChatId || findChatIdForResponse();
@@ -421,7 +536,8 @@ function buildStatusPayload(status) {
     polling: isPolling,
     messagesReceived: msgReceived,
     messagesSent: msgSent,
-    historyEntries: history.length
+    historyEntries: history.length,
+    hasStoredToken: hasStoredToken()
   };
 }
 
@@ -439,6 +555,7 @@ function notifyWidget(msg) {
 // ── Graceful shutdown ──
 function shutdown() {
   console.log("\nShutting down...");
+  stopTypingIndicator();
   stopPolling();
   if (wss) wss.close();
   process.exit(0);
@@ -449,7 +566,7 @@ process.on("SIGTERM", shutdown);
 
 // ── Main ──
 async function main() {
-  console.log("Telegram Bridge Daemon v0.2.0");
+  console.log("Telegram Bridge Daemon v0.3.0");
   console.log(`Port: ${DEFAULT_PORT}`);
   console.log(`Allowed chats: ${allowedChats.length > 0 ? allowedChats.join(", ") : "permissive (first user sets)"}`);
   console.log(`Mode: ${WIDGET_MANAGED ? "widget-managed" : "environment-token"}`);
