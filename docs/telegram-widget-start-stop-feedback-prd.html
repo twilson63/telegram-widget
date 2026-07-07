@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Telegram Widget Start/Stop Feedback PRD</title>
+<style>
+  body{font:14px/1.5 system-ui,-apple-system,sans-serif;max-width:960px;margin:32px auto;padding:0 20px;color:#0f172a;background:#fff}
+  h1,h2{line-height:1.2}.chip{display:inline-block;padding:2px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-size:12px}.criterion{margin:.35rem 0}.evidence{color:#64748b}.risk{color:#92400e}
+  code{background:#f1f5f9;padding:1px 4px;border-radius:4px}
+</style>
+<body>
+<h1>Telegram Widget — Start/Stop Feedback</h1>
+<p><span class="chip">LFG PRD</span></p>
+<h2>Definition</h2>
+<p><strong>Bridge transition feedback</strong> means the config screen clearly shows that a start or stop request is in progress, with a visible animated pending status and disabled controls that prevent duplicate/conflicting start/stop clicks until the operation resolves. It does not change the Telegram bridge protocol, token handling, command approval policy, or background process behavior.</p>
+<h2>Goals</h2>
+<ul>
+<li>Show an animated pending state while starting the bridge.</li>
+<li>Disable Start during startup, and prevent conflicting Stop clicks during startup.</li>
+<li>Show the same animated pending state while stopping the bridge.</li>
+<li>Disable Stop during shutdown, and prevent conflicting Start clicks during shutdown.</li>
+<li>Return controls to the correct enabled/disabled state when running, stopped, or errored.</li>
+</ul>
+<h2>Non-goals / constraints</h2>
+<ul>
+<li>No changes to bridge daemon, WebSocket protocol, or command strings.</li>
+<li>No secrets or bot tokens in logs, docs, or command line.</li>
+<li>Keep the widget as a single static HTML file; no new dependencies.</li>
+<li>Keep approvals visible; do not bypass HyperDesk <code>command.run</code> approvals.</li>
+</ul>
+<h2>Plan and acceptance criteria</h2>
+<ol>
+<li><strong>Add reusable pending UI styling.</strong>
+  <div class="criterion">Animated spinner appears inside <code>#configStatus</code> whenever it has class <code>pending</code>. <span class="evidence">CSS diff inspection.</span></div>
+  <div class="criterion">Animation is lightweight CSS only and does not require extra assets/scripts. <span class="evidence">CSS diff inspection.</span></div>
+</li>
+<li><strong>Add centralized control state helpers.</strong>
+  <div class="criterion">Start/Stop labels and disabled states are derived from status/operation instead of being scattered across handlers. <span class="evidence">JS diff inspection.</span></div>
+  <div class="criterion">Running enables Stop only; stopped/error enables Start only; starting/stopping disables both. <span class="evidence">JS diff inspection and syntax check.</span></div>
+</li>
+<li><strong>Wire start and stop operations.</strong>
+  <div class="criterion">Start immediately shows animated pending text and disables controls before <code>command.run</code>. <span class="evidence">JS diff inspection.</span></div>
+  <div class="criterion">Stop immediately shows animated pending text and disables controls before <code>command.run</code>. <span class="evidence">JS diff inspection.</span></div>
+  <div class="criterion">Failure paths clear the operation and restore an actionable control state. <span class="evidence">JS diff inspection and syntax check.</span></div>
+</li>
+</ol>
+<h2>Validation</h2>
+<ul>
+<li>Compile the inline widget script with Node syntax checking by extracting it from <code>ui/index.html</code>.</li>
+<li>Optionally run existing bridge tests from <code>scripts/</code> if dependencies are available.</li>
+</ul>
+<h2>Judge rubric</h2>
+<table><tr><th>Area</th><th>Target</th></tr><tr><td>Correctness</td><td>Transitions cannot be double-clicked into duplicate/conflicting operations.</td></tr><tr><td>Security/privacy</td><td>No token handling or approval bypass changes.</td></tr><tr><td>Simplicity</td><td>Small helper-driven UI state change; no new dependency.</td></tr><tr><td>Taste/originality</td><td>Subtle, readable pending animation consistent with the widget's Telegram-light style.</td></tr></table>
+</body>
+</html>

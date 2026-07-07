@@ -148,6 +148,20 @@
   .status-dot.running { background: var(--success); }
   .status-dot.error { background: var(--danger); }
 
+  .cancel-btn {
+    margin-left: 8px;
+    padding: 3px 8px;
+    border: 1px solid var(--danger);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--danger);
+    font: 11px system-ui, sans-serif;
+    font-weight: 600;
+    cursor: pointer;
+    display: none;
+  }
+  .cancel-btn:hover { background: rgba(220,38,38,0.1); }
+
   /* === Config Tab === */
   .config-panel {
     padding: 20px;
@@ -204,7 +218,24 @@
   }
   .config-status.stopped { background: rgba(136,144,176,0.15); color: var(--text-muted); }
   .config-status.running { background: rgba(78,203,113,0.15); color: var(--success); }
-  .config-status.pending { background: rgba(217,119,6,0.15); color: var(--warning); }
+  .config-status.pending {
+    background: rgba(217,119,6,0.15);
+    color: var(--warning);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .config-status.pending::before {
+    content: "";
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(217,119,6,0.25);
+    border-top-color: var(--warning);
+    border-radius: 50%;
+    flex: 0 0 auto;
+    animation: bridgeSpin 0.75s linear infinite;
+  }
+  @keyframes bridgeSpin { to { transform: rotate(360deg); } }
   .config-status.error { background: rgba(231,76,94,0.15); color: var(--danger); }
 
   /* === Inline approvals === */
@@ -305,6 +336,7 @@
       <span class="status-dot" id="statusDot"></span>
       <span id="statusText">Stopped</span>
       <span style="margin-left:auto" id="messageCount">0 messages</span>
+      <button class="cancel-btn" id="cancelAgentBtn" onclick="cancelAgentRun()">Cancel agent</button>
     </div>
   </div>
 
@@ -386,18 +418,28 @@
   const widget = HyperDeskWidget.connect();
   let ws = null;
   let wsRetryTimer = null;
+  let wsRetryCount = 0;
   let agentDispatchId = null;
   let agentBuffer = "";
   let isStreaming = false;
   let pendingBridgeConfig = null;
   let autoApproveCommands = false;
-  let configState = { running: false, desired: false, status: "stopped", token: "", chatId: "", activeChatId: "", port: 18765 };
+  let configState = { running: false, desired: false, status: "stopped", operation: null, token: "", chatId: "", activeChatId: "", port: 18765 };
   let msgCount = 0;
   let receivedCount = 0;
   let sentCount = 0;
   let lastMsgTime = null;
   let eventTypeCounters = { incoming: 0, outgoing: 0, error: 0, info: 0 };
   let uptimeStart = null;
+
+  // ── Stream watchdog ──
+  // If the background agent run emits no event for this long, we treat it as
+  // stuck (e.g. silently dropped dispatch, host session gone) and recover.
+  // Paused while an approval bar is visible, since approvals can wait on the
+  // human indefinitely.
+  const STREAM_IDLE_TIMEOUT_MS = 90000;
+  let streamWatchdog = null;
+  let approvalVisible = false;
 
   // ── Tab Switching ──
   document.querySelectorAll(".tab").forEach(tab => {
@@ -416,6 +458,43 @@
 
   // ── Helpers ──
   function ts() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+
+  // ── Config persistence (localStorage) ──
+  // The bot token and chat ID are remembered across widget reloads so the user
+  // only has to enter them once. localStorage is wrapped in try/catch because
+  // some sandboxed widget origins can throw on storage access; in that case we
+  // silently degrade to "enter each session".
+  const STORAGE_KEY = "tg.widget.config.v1";
+  function readStorage(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
+  }
+  function writeStorage(key, value) {
+    try { localStorage.setItem(key, value); return true; } catch (_) { return false; }
+  }
+  function saveConfig() {
+    const token = document.getElementById("botToken").value.trim();
+    const chatId = document.getElementById("chatId").value.trim();
+    const payload = JSON.stringify({ token, chatId });
+    if (writeStorage(STORAGE_KEY, payload)) {
+      logEvent("info", "Saved bot config to local storage");
+    } else {
+      logEvent("info", "Local storage unavailable — config not persisted");
+    }
+  }
+  function loadConfig() {
+    const raw = readStorage(STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const cfg = JSON.parse(raw);
+      if (cfg.token && !document.getElementById("botToken").value) {
+        document.getElementById("botToken").value = cfg.token;
+      }
+      if (typeof cfg.chatId === "string" && !document.getElementById("chatId").value) {
+        document.getElementById("chatId").value = cfg.chatId;
+      }
+      logEvent("info", "Restored bot config from local storage");
+    } catch (_) { /* ignore malformed entry */ }
+  }
   function timestamp() { return new Date().toISOString(); }
 
   function addMessage(text, type) {
@@ -449,7 +528,58 @@
     }
   }
 
+  function setTypingText(text) {
+    const el = document.getElementById("typingIndicator");
+    if (!el) return;
+    const dots = '<span class="typing-dots"><span></span><span></span><span></span></span>';
+    el.innerHTML = text + dots;
+  }
+
+  function setCancelBtn(show) {
+    const btn = document.getElementById("cancelAgentBtn");
+    if (btn) btn.style.display = show ? "" : "none";
+  }
+
+  function syncBridgeControls(status) {
+    const btnStart = document.getElementById("btnStart");
+    const btnStop = document.getElementById("btnStop");
+    if (!btnStart || !btnStop) return;
+
+    if (configState.operation === "starting") {
+      btnStart.textContent = "Starting…";
+      btnStop.textContent = "Stop Bridge";
+      btnStart.disabled = true;
+      btnStop.disabled = true;
+      return;
+    }
+
+    if (configState.operation === "stopping") {
+      btnStart.textContent = "Start Bridge";
+      btnStop.textContent = "Stopping…";
+      btnStart.disabled = true;
+      btnStop.disabled = true;
+      return;
+    }
+
+    btnStart.textContent = "Start Bridge";
+    btnStop.textContent = "Stop Bridge";
+    btnStart.disabled = status === "running";
+    btnStop.disabled = status !== "running";
+  }
+
+  function setBridgeOperation(operation, message) {
+    configState.operation = operation;
+    const configStatus = document.getElementById("configStatus");
+    configStatus.className = "config-status pending";
+    configStatus.textContent = message;
+    document.getElementById("statusText").textContent = operation === "stopping" ? "Stopping" : "Starting";
+    syncBridgeControls("pending");
+  }
+
   function updateConnectionStatus(status) {
+    configState.status = status;
+    configState.operation = null;
+
     const dot = document.getElementById("statusDot");
     const text = document.getElementById("statusText");
     const configStatus = document.getElementById("configStatus");
@@ -459,6 +589,7 @@
 
     configStatus.className = "config-status " + status;
     configStatus.textContent = status === "running" ? "Bridge running" : status === "error" ? "Bridge error — " + configState.lastError : "Bridge stopped";
+    syncBridgeControls(status);
   }
 
   function logEvent(type, msg) {
@@ -487,11 +618,65 @@
   }
   setInterval(updateUptime, 1000);
 
+  // ── Stream watchdog helpers ──
+  function resetStreamWatchdog() {
+    if (approvalVisible) return; // paused while a tool/command approval is pending
+    clearTimeout(streamWatchdog);
+    streamWatchdog = setTimeout(onStreamStalled, STREAM_IDLE_TIMEOUT_MS);
+  }
+
+  function clearStreamWatchdog() {
+    clearTimeout(streamWatchdog);
+    streamWatchdog = null;
+  }
+
+  function resumeStreamWatchdog() {
+    if (isStreaming) resetStreamWatchdog();
+  }
+
+  function onStreamStalled() {
+    if (!isStreaming) return;
+    logEvent("error", "Agent run stalled — no activity for " + (STREAM_IDLE_TIMEOUT_MS / 1000) + "s. Cancelling.");
+    const notice = "Agent run stalled (no activity for 90s). Cancelled — send your message again.";
+    addMessage(notice, "error");
+    try { widget.agent.cancel().catch(() => {}); } catch (_) {}
+    // Give the host a moment to emit done/error; then force-cleanup if it didn't.
+    setTimeout(forceCleanupAgentStream, 3000);
+    showTyping(false);
+    setCancelBtn(false);
+  }
+
+  function forceCleanupAgentStream() {
+    if (!isStreaming) return;
+    logEvent("error", "Force-cleaning stuck agent stream");
+    isStreaming = false;
+    agentDispatchId = null;
+    agentBuffer = "";
+    showTyping(false);
+    setCancelBtn(false);
+    clearStreamWatchdog();
+  }
+
+  window.cancelAgentRun = function() {
+    if (!isStreaming) return;
+    logEvent("info", "User cancelled agent run");
+    addMessage("Cancelling agent run…", "user");
+    try { widget.agent.cancel().catch(() => {}); } catch (_) {}
+    // Expect a done/error event to clean up; force-cleanup as a fallback.
+    setTimeout(forceCleanupAgentStream, 3000);
+    showTyping(false);
+    setCancelBtn(false);
+    clearStreamWatchdog();
+  };
+
   // ── Widget-originated approval handling ──
-  // HyperDesk routes command.run approvals into the iframe as a widget-approval
-  // command. Render Approve/Deny here and post hyperdesk:approval-response back.
+  // HyperDesk routes command.run (and agent tool) approvals into the iframe as
+  // a widget-approval command. Render Approve/Deny here and post
+  // hyperdesk:approval-response back. While the bar is visible, the stream
+  // watchdog is paused so a slow human response doesn't look like a stuck run.
   function respondApproval(id, approved, approveAll) {
     document.getElementById("approvalBar").classList.remove("show");
+    approvalVisible = false;
     globalThis.parent.postMessage({
       type: "hyperdesk:approval-response",
       id,
@@ -499,6 +684,7 @@
       approveAll: approveAll || ""
     }, "*");
     logEvent("info", approved ? (approveAll ? "Approved command and future local commands" : "Approved command") : "Denied command");
+    resumeStreamWatchdog();
   }
 
   function showApproval(data) {
@@ -514,6 +700,10 @@
     bar.classList.add("show");
     bar.style.animation = "none"; void bar.offsetWidth; bar.style.animation = "";
 
+    // Pause the watchdog — the human may take arbitrarily long to respond.
+    approvalVisible = true;
+    clearStreamWatchdog();
+
     const id = data.id;
     document.getElementById("approvalApprove").onclick = () => respondApproval(id, true, "");
     document.getElementById("approvalDeny").onclick = () => respondApproval(id, false, "");
@@ -522,9 +712,16 @@
       respondApproval(id, true, "local");
     };
 
-    const configStatus = document.getElementById("configStatus");
-    configStatus.className = "config-status pending";
-    configStatus.textContent = "Approval needed — use the prompt at the bottom of this widget";
+    const approvalMessage = configState.operation === "stopping"
+      ? "Stop approval needed — use the prompt at the bottom of this widget"
+      : "Start approval needed — use the prompt at the bottom of this widget";
+    if (configState.operation === "starting" || configState.operation === "stopping") {
+      setBridgeOperation(configState.operation, approvalMessage);
+    } else {
+      const configStatus = document.getElementById("configStatus");
+      configStatus.className = "config-status pending";
+      configStatus.textContent = "Approval needed — use the prompt at the bottom of this widget";
+    }
     logEvent("info", "Approval prompt shown in widget");
   }
   widget.onCommand("widget-approval", (data) => showApproval(data));
@@ -540,15 +737,16 @@
     ws.onopen = () => {
       logEvent("info", "Connected to bridge on port " + port);
       document.getElementById("statProcess").textContent = "connected";
-      updateConnectionStatus("running");
       configState.running = true;
-      document.getElementById("btnStart").disabled = true;
-      document.getElementById("btnStop").disabled = false;
+      wsRetryCount = 0;
 
       if (pendingBridgeConfig) {
+        setBridgeOperation("starting", "Connected — configuring Telegram bot…");
         ws.send(JSON.stringify({ type: "bridge:configure", payload: pendingBridgeConfig }));
         pendingBridgeConfig = null;
         logEvent("info", "Sent bridge configuration over localhost WebSocket");
+      } else {
+        updateConnectionStatus("running");
       }
     };
 
@@ -566,7 +764,14 @@
             updateConnectionStatus("error");
             addMessage(data.payload.error, "error");
           } else if (data.payload?.status === "stopped") {
-            updateConnectionStatus("stopped");
+            if (configState.operation === "stopping") {
+              setBridgeOperation("stopping", "Stopping bridge process…");
+            } else {
+              updateConnectionStatus("stopped");
+            }
+          } else if (data.payload?.status === "configuring" || data.payload?.status === "waiting-for-config") {
+            configState.lastError = null;
+            setBridgeOperation("starting", data.payload.status === "configuring" ? "Configuring Telegram bot…" : "Waiting for bridge configuration…");
           } else {
             configState.lastError = null;
             updateConnectionStatus("running");
@@ -591,19 +796,25 @@
     ws.onclose = () => {
       logEvent("info", "Bridge disconnected, retrying in 5s...");
       configState.running = false;
-      if (configState.lastError) {
+      if (configState.operation === "stopping") {
+        setBridgeOperation("stopping", "Stopping bridge process…");
+      } else if (configState.operation === "starting" && configState.desired) {
+        setBridgeOperation("starting", "Waiting for bridge to accept WebSocket…");
+      } else if (configState.lastError) {
         updateConnectionStatus("error");
       } else {
         updateConnectionStatus("stopped");
       }
       document.getElementById("statProcess").textContent = "disconnected";
-      document.getElementById("btnStart").disabled = false;
-      document.getElementById("btnStop").disabled = true;
-      isStreaming = false;
-      showTyping(false);
-      // Retry after 5 seconds only when the user asked the bridge to run.
+      // A bridge restart kills the agent dispatch path too — drop any stuck run.
+      forceCleanupAgentStream();
+      // Retry with quick backoff: 300ms, 600ms, 1s, then 2s — the bridge
+      // only needs ~500ms to boot its WebSocket server, so we try fast first.
       if (configState.desired) {
-        wsRetryTimer = setTimeout(connectWebSocket, 5000);
+        const delays = [300, 600, 1000, 2000];
+        const delay = wsRetryCount < delays.length ? delays[wsRetryCount] : 2000;
+        wsRetryCount++;
+        wsRetryTimer = setTimeout(connectWebSocket, delay);
       }
     };
   }
@@ -624,9 +835,7 @@
 
     addMessage("Starting bridge daemon...", "user");
     logEvent("info", `Starting bridge on port ${port} — approve below when prompted`);
-    document.getElementById("configStatus").className = "config-status pending";
-    document.getElementById("configStatus").textContent = "Waiting for command approval…";
-    document.getElementById("btnStart").disabled = true;
+    setBridgeOperation("starting", "Starting bridge — waiting for command approval…");
 
     widget.command.run({
       command: command,
@@ -636,19 +845,22 @@
       uptimeStart = Date.now();
       document.getElementById("statProcess").textContent = "pid—" + Date.now().toString(36);
       logEvent("info", "Bridge daemon started");
-      connectWebSocket();
+      wsRetryCount = 0;
+      setTimeout(connectWebSocket, 300);
     }).catch(err => {
       logEvent("error", "Failed to start bridge: " + err.message);
+      configState.desired = false;
+      pendingBridgeConfig = null;
       configState.lastError = err.message;
       updateConnectionStatus("error");
       addMessage("Failed to start: " + err.message, "error");
-      document.getElementById("btnStart").disabled = false;
     });
   };
 
   window.stopBridge = function() {
     addMessage("Stopping bridge daemon...", "user");
     logEvent("info", "Stopping bridge daemon");
+    setBridgeOperation("stopping", "Stopping bridge — waiting for command approval…");
     configState.desired = false;
     pendingBridgeConfig = null;
     clearTimeout(wsRetryTimer);
@@ -686,7 +898,7 @@
 
   async function dispatchToAgent(userText, chatId) {
     if (isStreaming) {
-      addMessage("Agent busy — please wait...", "error");
+      addMessage("Agent busy — tap \"Cancel agent\" below and resend, or wait for it to finish.", "error");
       return;
     }
 
@@ -701,6 +913,8 @@
     isStreaming = true;
     agentBuffer = "";
     showTyping(true);
+    setCancelBtn(true);
+    resetStreamWatchdog();
 
     let unsubscribe = null;
     try {
@@ -709,8 +923,24 @@
       unsubscribe = widget.onAgentEvent((event) => {
         if (agentDispatchId && event.dispatchId && event.dispatchId !== agentDispatchId) return;
 
+        // Any event resets the stall timer (but not while an approval is pending).
+        resetStreamWatchdog();
+
         if (event.event === "delta") {
           agentBuffer += event.text || "";
+          setTypingText("Agent is typing");
+          return;
+        }
+
+        if (event.event === "tool") {
+          const kind = event.kind || "tool";
+          setTypingText("Agent is running a tool (" + kind + ")");
+          logEvent("info", "agent tool: " + kind);
+          return;
+        }
+
+        if (event.event === "context") {
+          setTypingText("Agent is thinking");
           return;
         }
 
@@ -768,6 +998,8 @@
     agentDispatchId = null;
     agentBuffer = "";
     showTyping(false);
+    setCancelBtn(false);
+    clearStreamWatchdog();
   }
 
   function sendToBridge(text, chatId) {
@@ -797,6 +1029,13 @@
   });
 
   // ── Init ──
+  // Restore saved bot token / chat ID, then persist on every change.
+  loadConfig();
+  document.getElementById("botToken").addEventListener("change", saveConfig);
+  document.getElementById("botToken").addEventListener("input", saveConfig);
+  document.getElementById("chatId").addEventListener("change", saveConfig);
+  document.getElementById("chatId").addEventListener("input", saveConfig);
+
   logEvent("info", "Telegram widget loaded");
 
 })();
