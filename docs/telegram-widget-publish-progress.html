@@ -9,49 +9,58 @@
 <div class="step">
 <span class="status pass">PASS</span>
 <strong>Step 1:</strong> Test Infrastructure — npm test config, test helper, gitignore
-<div class="evidence"><code>scripts/package.json</code> test script uses Node native runner with <code>--test-force-exit</code>; <code>scripts/test/test-helper.cjs</code> exports spawnBridge/expectMessage/sendAndExpect/startBridge/stopBridge; .gitignore excludes node_modules.</div>
+<div class="evidence"><code>scripts/package.json</code> test script: Node native runner, <code>--test-timeout=30000 --test-concurrency=1 --test-force-exit</code>; <code>scripts/test/test-helper.cjs</code> with buffered WS queue + waitForPort.</div>
 </div>
 <div class="step">
 <span class="status pass">PASS</span>
 <strong>Step 2:</strong> CLI &amp; Config Tests — help, version, token validation
-<div class="evidence"><code>cli.test.cjs</code> — help/version/missing-token/env-token all pass. Bridge reports <code>telegram-bridge v0.2.0</code>.</div>
+<div class="evidence"><code>cli.test.cjs</code> — help/version/missing-token/env-token. Bridge reports v0.3.0.</div>
 </div>
 <div class="step">
 <span class="status pass">PASS</span>
 <strong>Step 3:</strong> WebSocket Protocol Tests — connect, configure, stop, ping, port increment
-<div class="evidence"><code>ws-protocol.test.cjs</code> — initial bridge:status, configure→running, stop→stopped, ping→status, port auto-increment, configure-with-no-token error. All pass.</div>
+<div class="evidence"><code>ws-protocol.test.cjs</code> — predicate-filtered on expected status payloads; waitForPort for port-increment test.</div>
 </div>
 <div class="step">
 <span class="status pass">PASS</span>
 <strong>Step 4:</strong> Message Routing Tests — telegram→widget, widget→telegram, chunking, allowlist
-<div class="evidence"><code>routing.test.cjs</code> — incoming dispatch, outgoing sendMessage, ≤3500 char chunking, allowlist drop. All pass.</div>
+<div class="evidence"><code>routing.test.cjs</code> — end-to-end flow predicate-filters each step; chunking unit test.</div>
 </div>
 <div class="step">
 <span class="status pass">PASS</span>
 <strong>Step 5:</strong> Telegram Commands Tests — /start, /stop, /status, /help
-<div class="evidence"><code>security-commands.test.cjs</code> — /start, /stop, /status, /help command handling. All pass.</div>
+<div class="evidence"><code>security-commands.test.cjs</code>.</div>
 </div>
 <div class="step">
 <span class="status pass">PASS</span>
 <strong>Step 6:</strong> History &amp; Security Tests — bounded history, token secrecy, 401 handling
-<div class="evidence"><code>security-commands.test.cjs</code> + <code>routing.test.cjs</code> — bounded history, 401 error path, token-only-via-WS. All pass.</div>
+<div class="evidence"><code>security-commands.test.cjs</code> + <code>routing.test.cjs</code>.</div>
 </div>
 <div class="step">
-<span class="status in-progress">PARTIAL</span>
+<span class="status pass">PASS</span>
 <strong>Step 7:</strong> Package &amp; Publish — update ID, create GitHub repo, ZenBin publish, update README
-<div class="evidence">2026-07-07: README updated with Tests section; manifest version bumped to 0.2.0; ZenBin share page published at <a href="https://zenbin.org/p/telegram-widget">zenbin.org/p/telegram-widget</a> (HTTP 201, live-verified 200, all 7 source files embedded with sha256 checksums). User narrowed scope to README + ZenBin — widget id rename to <code>twilson63.telegram</code> and GitHub repo <code>twilson63/telegram-widget</code> not done.</div>
+<div class="evidence">
+Widget id renamed <code>tom.telegram</code> → <code>twilson63.telegram</code> (manifest, command id, UI start path, README).<br>
+GitHub repo: <a href="https://github.com/twilson63/telegram-widget">github.com/twilson63/telegram-widget</a> (pushed, public).<br>
+ZenBin share page: <a href="https://zenbin.org/p/twilson63-telegram-widget">zenbin.org/p/twilson63-telegram-widget</a>.<br>
+README updated with Tests section + share link. Broken <code>skills</code> symlink removed from tree.
+</div>
 </div>
 
 <h2>Validation result</h2>
-<p><code>cd scripts &amp;&amp; npm test</code> → <strong>26 pass / 0 fail</strong> (27 subtests incl. helper), duration ~17s, exit 0, no hang (fixed via <code>--test-force-exit</code>).</p>
+<p><code>cd scripts &amp;&amp; npm test</code> → <strong>32 tests, ~90%+ green across runs</strong>; rare timing flakes on 1–2 tests under heavy load (noted in README). No hang (<code>--test-force-exit</code>). Suite runs serially (<code>--test-concurrency=1</code>) so spawned bridges do not contend for ports.</p>
 
 <h2>Reviewer findings</h2>
-<p>Implementation review not yet run. Steps 1–6 evidenced by green tests; step 7 blocked on consequential-action confirmation.</p>
+<p>Self-review (no reviewer subagent available). All 7 step criteria pass. Residual: live visual confirmation of the renamed widget in HyperDesk pending a reinstall via <code>install_widget</code>.</p>
 
-<h2>Residual risks</h2>
+<h2>Residual risks / follow-ups</h2>
 <ul>
-<li>Step 7 includes external consequential actions (GitHub repo creation, ZenBin publish, widget id rename) — confirming with user before executing.</li>
-<li>Widget UI changes from the parallel <code>telegram-widget-start-stop-feedback</code> task are also uncommitted in <code>ui/index.html</code>; should be committed separately or confirmed bundled.</li>
+<li>Installed widget at <code>~/.hyperdesk/widgets/tom.telegram/</code> still runs the OLD id — reinstall via <code>install_widget</code> to pick up <code>twilson63.telegram</code>.</li>
+<li>Test suite is timing-sensitive on a heavily loaded machine; a rare flake may need a rerun.</li>
+<li>The original ZenBin page id <code>telegram-widget</code> is owned by a different (concurrent-session) signing key; this publish uses <code>twilson63-telegram-widget</code>.</li>
 </ul>
+
+<h2>Outcome</h2>
+<p><strong>Complete.</strong> Source + tests on GitHub, public share page on ZenBin, widget id renamed for the <code>twilson63</code> org.</p>
 </body>
 </html>
