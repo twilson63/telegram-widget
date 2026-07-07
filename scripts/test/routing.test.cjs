@@ -26,7 +26,7 @@ test("routing: bridge:configure with chatId is accepted", async () => {
   const resp = await sendAndExpect(ws, {
     type: "bridge:configure",
     payload: { token: "0:ABC-test-chatid", allowedChats: "12345" }
-  }, 2000).catch(() => ({}));
+  }, 3000, (m) => m.type === "bridge:status" && m.payload?.status === "configuring").catch(() => ({}));
 
   ok(resp.type === "bridge:status" || !resp.error, "Config should be accepted");
 
@@ -40,7 +40,7 @@ test("routing: bridge:stop without polling does not crash", async () => {
   });
   // startBridge already drained initial status
 
-  const resp = await sendAndExpect(ws, { type: "bridge:stop" }, 1000);
+  const resp = await sendAndExpect(ws, { type: "bridge:stop" }, 3000);
 
   ok(resp.type === "bridge:status", "Should get status even without polling");
   ok(!proc.killed, "Process should survive stop without polling");
@@ -60,7 +60,7 @@ test("routing: malformed WS message does not crash bridge", async () => {
 
   ok(!proc.killed, "Process should survive malformed message");
 
-  const pingResp = await sendAndExpect(ws, { type: "bridge:ping" }, 1000);
+  const pingResp = await sendAndExpect(ws, { type: "bridge:ping" }, 3000);
   ok(pingResp.type === "bridge:status", "Bridge should still respond after malformed message");
 
   await stopBridge(proc, ws);
@@ -78,7 +78,7 @@ test("routing: unknown WS message type does not crash bridge", async () => {
 
   ok(!proc.killed, "Process should survive unknown message type");
 
-  const pingResp = await sendAndExpect(ws, { type: "bridge:ping" }, 1000);
+  const pingResp = await sendAndExpect(ws, { type: "bridge:ping" }, 3000);
   ok(pingResp.type === "bridge:status", "Bridge still works after unknown message");
 
   await stopBridge(proc, ws);
@@ -140,22 +140,25 @@ test("routing: configure → receive message from bridge → stop", async () => 
     args: ["--widget-managed"]
   });
 
-  // Configure
+  // Configure — the bridge emits a sync "configuring" status, then an async
+  // "running"/error status once grammy tries the (fake) token. Wait specifically
+  // for the initial "configuring" so the later async burst cannot desync us.
   await sendAndExpect(ws, {
     type: "bridge:configure",
     payload: { token: "0:ABC-test-flow", allowedChats: "99999" }
-  }, 1500).catch(() => {});
+  }, 3000, (m) => m.type === "bridge:status" && m.payload?.status === "configuring").catch(() => {});
 
-  // Simulate agent response via WS
+  // Simulate agent response via WS. With a fake token the bot is not polling, so
+  // the bridge replies with an error status; accept any status ack.
   const msgResp = await sendAndExpect(ws, {
     type: "telegram:message",
     payload: { text: "Hello from bridge test", chatId: "99999" }
-  }, 1000);
+  }, 3000, (m) => m.type === "bridge:status");
 
   ok(msgResp.type === "bridge:status" || msgResp.type === undefined, "Bridge processes message");
 
-  // Stop
-  const stopResp = await sendAndExpect(ws, { type: "bridge:stop" }, 1000);
+  // Stop — filter for the "stopped" status so stray async statuses are ignored.
+  const stopResp = await sendAndExpect(ws, { type: "bridge:stop" }, 3000, (m) => m.type === "bridge:status" && m.payload?.status === "stopped");
   strictEqual(stopResp.payload?.status, "stopped", "Should stop cleanly");
   ok(!proc.killed, "Process still alive after full flow");
 

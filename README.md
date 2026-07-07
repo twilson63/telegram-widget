@@ -38,7 +38,7 @@ Telegram ──Bot API──→ Bridge Daemon (Node.js)
 Install it with HyperDesk's widget installer. In this project, the agent can install it directly with `install_widget`; manually dropping this source folder into the project directory will not load it. The installed layout is:
 
 ```
-~/.hyperdesk/widgets/tom.telegram/
+~/.hyperdesk/widgets/twilson63.telegram/
 ├── hyperdesk.extension.json
 ├── ui/
 │   ├── index.html
@@ -51,7 +51,7 @@ Install it with HyperDesk's widget installer. In this project, the agent can ins
 └── README.md
 ```
 
-The installed widget lives at `~/.hyperdesk/widgets/tom.telegram/` and appears under **View → Widgets → Telegram**. If that folder does not exist, the widget is not installed yet.
+The installed widget lives at `~/.hyperdesk/widgets/twilson63.telegram/` and appears under **View → Widgets → Telegram**. If that folder does not exist, the widget is not installed yet.
 
 ### 3. Configure
 
@@ -96,7 +96,9 @@ npm test
 
 Coverage: CLI flags and config validation, WebSocket protocol (`bridge:configure`, `bridge:stop`, `bridge:ping`, port auto-increment), message routing and chunking, chat allowlist enforcement, Telegram command handlers, bounded conversation history, token secrecy (the token value never reaches logs, argv, or env), bridge-side token storage (file perms, stored-token fallback, `remember:false`, `bridge:forget-token`), and graceful shutdown. Tests use isolated temp config dirs, so they never touch your real stored token.
 
-The runner uses `--test-timeout=30000 --test-force-exit`, so a hung test can never wedge the suite.
+The runner uses `--test-timeout=30000 --test-concurrency=1 --test-force-exit`: tests run serially so spawned bridges do not contend for ports, and a hung test can never wedge the suite.
+
+The bridge emits asynchronous status messages while grammy starts polling, so the helpers predicate-filter on expected status payloads rather than grabbing the next message. On a heavily loaded machine a single timing-sensitive test may occasionally time out; rerun `npm test` if that happens.
 
 ## Telegram Commands
 
@@ -179,7 +181,7 @@ If port 18765 is in use, the bridge auto-increments to the next available port. 
 After the first start, configure session-wide "always allow" for the bridge command to skip future prompts. Go to HyperDesk settings → Approvals.
 
 ### No response on Telegram after starting
-1. Make sure the widget is installed at `~/.hyperdesk/widgets/tom.telegram/` and visible in **View → Widgets**
+1. Make sure the widget is installed at `~/.hyperdesk/widgets/twilson63.telegram/` and visible in **View → Widgets**
 2. Make sure you sent `/start` to the bot in Telegram
 3. Check the Chat tab — you should see the bridge connect and Telegram messages appear
 4. Check the Status tab event log for errors

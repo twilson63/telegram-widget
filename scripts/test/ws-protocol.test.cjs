@@ -6,7 +6,7 @@
 
 const { strictEqual, ok, deepStrictEqual } = require("node:assert");
 const { test } = require("node:test");
-const { startBridge, stopBridge, sendAndExpect } = require("./test-helper.cjs");
+const { startBridge, stopBridge, sendAndExpect, waitForPort } = require("./test-helper.cjs");
 
 // ── Test: Bridge starts WS server and sends initial status ──
 test("WS: initial connection receives bridge:status", async () => {
@@ -43,14 +43,15 @@ test("WS: bridge:stop changes status to stopped", async () => {
     args: ["--widget-managed"]
   });
 
-  // Configure (bot will fail auth, but bridge stays alive)
+  // Configure (bot will fail auth, but bridge stays alive). Wait for the sync
+  // "configuring" ack so the later async error status cannot be grabbed by stop.
   await sendAndExpect(ws, {
     type: "bridge:configure",
     payload: { token: "0:ABC-test", allowedChats: "" }
-  }, 2000).catch(() => {});
+  }, 3000, (m) => m.type === "bridge:status" && m.payload?.status === "configuring").catch(() => {});
 
-  // Now stop
-  const stopResp = await sendAndExpect(ws, { type: "bridge:stop" }, 1000);
+  // Now stop — filter for "stopped" so stray async statuses are ignored.
+  const stopResp = await sendAndExpect(ws, { type: "bridge:stop" }, 3000, (m) => m.type === "bridge:status" && m.payload?.status === "stopped");
   ok(stopResp.type === "bridge:status", "Should receive bridge:status after stop");
   strictEqual(stopResp.payload?.status, "stopped", "Status should be stopped");
 
@@ -63,7 +64,7 @@ test("WS: bridge:ping returns bridge:status", async () => {
     args: ["--widget-managed"]
   });
 
-  const pingResp = await sendAndExpect(ws, { type: "bridge:ping" }, 1000);
+  const pingResp = await sendAndExpect(ws, { type: "bridge:ping" }, 3000);
   ok(pingResp.type === "bridge:status", "Pong should be bridge:status");
   ok(pingResp.payload?.port, "Pong should include port");
 
@@ -75,10 +76,10 @@ test("WS: port auto-increments when default is occupied", async () => {
   const { spawnBridge, expectMessage, stopBridge } = require("./test-helper.cjs");
 
   const first = spawnBridge({ args: ["--widget-managed"], port: 19010 });
-  await new Promise((r) => setTimeout(r, 800));
+  await waitForPort(19010, 4000);
 
   const second = spawnBridge({ args: ["--widget-managed"], port: 19010 });
-  await new Promise((r) => setTimeout(r, 1000));
+  await waitForPort(19011, 4000);
 
   const { WebSocket } = require("ws");
   const ws = new WebSocket(`ws://127.0.0.1:${19011}`);
@@ -105,7 +106,7 @@ test("WS: bridge:configure with no token sends error status", async () => {
   const errResp = await sendAndExpect(ws, {
     type: "bridge:configure",
     payload: { token: "", allowedChats: "" }
-  }, 1000);
+  }, 3000, (m) => m.type === "bridge:status" && m.payload?.error === "Bot token missing");
 
   ok(errResp.type === "bridge:status", "Should get status for empty token config");
   strictEqual(errResp.payload?.error, "Bot token missing", "Error should say 'Bot token missing'");

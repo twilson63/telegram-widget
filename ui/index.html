@@ -870,7 +870,7 @@
     // Blank token + stored token → the bridge falls back to its remembered one.
     pendingBridgeConfig = { token, allowedChats: chatId, port };
 
-    const command = "cd ~/.hyperdesk/widgets/tom.telegram/scripts && if [ ! -d node_modules/grammy ] || [ ! -d node_modules/ws ]; then npm install --omit=dev; fi && (pkill -f '[t]elegram-bridge.cjs' || true) && (nohup node telegram-bridge.cjs --widget-managed >> telegram-bridge.log 2>&1 < /dev/null & echo $!)";
+    const command = "cd ~/.hyperdesk/widgets/twilson63.telegram/scripts && if [ ! -d node_modules/grammy ] || [ ! -d node_modules/ws ]; then npm install --omit=dev; fi && (pkill -f '[t]elegram-bridge.cjs' || true) && (nohup node telegram-bridge.cjs --widget-managed >> telegram-bridge.log 2>&1 < /dev/null & echo $!)";
 
     addMessage("Starting bridge daemon...", "user");
     logEvent("info", `Starting bridge on port ${port} — approve below when prompted`);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "tom.telegram",
+  "id": "twilson63.telegram",
   "name": "Telegram",
   "version": "0.3.0",
   "permissions": [
@@ -15,7 +15,7 @@
         "title": "Telegram",
         "slot": "right-panel",
         "entry": "ui/index.html",
-        "command": "tom.telegram.toggle",
+        "command": "twilson63.telegram.toggle",
         "sandbox": true,
         "defaultOpen": false,
         "preferredWidth": 400
@@ -23,7 +23,7 @@
     ],
     "commands": [
       {
-        "id": "tom.telegram.toggle",
+        "id": "twilson63.telegram.toggle",
         "title": "Toggle Telegram Widget",
         "scope": "global-window",
         "when": "activeSession"

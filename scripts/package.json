@@ -4,7 +4,7 @@
   "description": "Tests for the Telegram Bridge Daemon",
   "private": true,
   "scripts": {
-    "test": "node --test --test-timeout=30000 --test-force-exit test/*.test.cjs"
+    "test": "node --test --test-timeout=30000 --test-concurrency=1 --test-force-exit test/*.test.cjs"
   },
   "dependencies": {
     "grammy": "^1.44.0",
