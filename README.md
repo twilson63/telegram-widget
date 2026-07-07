@@ -74,7 +74,7 @@ That's it. Send any message on Telegram to chat with your agent.
 - Connection status indicator (green = running, gray = stopped, red = error)
 
 ### Config
-- Bot Token (password field)
+- Bot Token (password field — leave blank once the bridge has it remembered; "Forget token" deletes it)
 - Chat ID allowlist (optional)
 - Start / Stop buttons
 - Connection status readout
@@ -83,6 +83,20 @@ That's it. Send any message on Telegram to chat with your agent.
 - Bridge process info, WebSocket port, uptime
 - Message counters (received/sent)
 - Event log with timestamps
+
+## Tests
+
+The bridge daemon has a full feature-coverage test suite (32 tests) using Node's native test runner. No credentials, network, or running HyperDesk instance required — the Telegram API is never called and everything runs against the localhost WebSocket.
+
+```bash
+cd scripts
+npm install
+npm test
+```
+
+Coverage: CLI flags and config validation, WebSocket protocol (`bridge:configure`, `bridge:stop`, `bridge:ping`, port auto-increment), message routing and chunking, chat allowlist enforcement, Telegram command handlers, bounded conversation history, token secrecy (the token value never reaches logs, argv, or env), bridge-side token storage (file perms, stored-token fallback, `remember:false`, `bridge:forget-token`), and graceful shutdown. Tests use isolated temp config dirs, so they never touch your real stored token.
+
+The runner uses `--test-timeout=30000 --test-force-exit`, so a hung test can never wedge the suite.
 
 ## Telegram Commands
 
@@ -114,9 +128,11 @@ The bridge maintains a history of the last 20 exchanges (40 messages). Each agen
 
 Your bot token is entered in the widget's Config tab. On start, the bridge process is launched without the token in its command line or environment; after the localhost WebSocket connects, the widget sends the token over `127.0.0.1` using a `bridge:configure` message. The token is never logged or echoed.
 
+Between sessions the token is remembered by the **bridge daemon**, not the widget: it's written to `~/.hyperdesk/telegram-bridge/config.json` with user-only permissions (`chmod 600`). It never sits in browser-readable storage (localStorage), so other widgets or an XSS in the UI can't reach it. Once stored, you can leave the token field blank — the Config tab shows "Token remembered by the bridge" with a **Forget token** link that deletes the file (`bridge:forget-token`). Pass `remember: false` in `bridge:configure` to opt out of storage entirely.
+
 ### Security
 
-- **Bot token**: entered in widget UI only, sent to the daemon over localhost WebSocket, never logged
+- **Bot token**: entered in widget UI, sent to the daemon over localhost WebSocket, never logged; persisted only daemon-side in a user-only file (0600), never in browser storage
 - **Chat ID allowlist**: validates incoming messages before forwarding
 - **WebSocket**: binds to `127.0.0.1` only — never exposed to network
 - **No webhooks**: long-polling means no public URL or ngrok tunnel needed

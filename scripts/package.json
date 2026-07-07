@@ -1,14 +1,11 @@
 {
-  "name": "scripts",
+  "name": "telegram-bridge-tests",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Tests for the Telegram Bridge Daemon",
+  "private": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test --test-timeout=30000 --test-force-exit test/*.test.cjs"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "grammy": "^1.44.0",
     "ws": "^8.21.0"

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Telegram Widget — Publish &amp; Test Plan</title>
+<style>body{font:14px/1.6 system-ui,system,-apple-system,sans-serif;margin:2rem;max-width:800px;color:#1a1a1a}h1{font-size:1.8rem;margin-bottom:0.5rem}h2{font-size:1.3rem;margin-top:1.8rem;border-bottom:1px solid #ddd;padding-bottom:0.3rem}h3{font-size:1.1rem;margin-top:1.2rem}p,li{line-height:1.6}ul{padding-left:1.5rem}code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.9em}.criterion{margin:0.4rem 0;padding:0.4rem 0.6rem;background:#f8f8f8;border-left:3px solid #666;font-size:0.95em}.evidence{font-size:0.85em;color:#555;margin-top:0.2rem}table{width:100%;border-collapse:collapse;margin:0.8rem 0}th,td{text-align:left;padding:6px 8px;border:1px solid #ddd;font-size:0.95em}th{background:#f5f5f5}.pass{color:green;font-weight:bold}.fail{color:red;font-weight:bold}
+</style></head>
+<body>
+
+<h1>Telegram Widget — Publish &amp; Test Plan</h1>
+<p><strong>Task:</strong> Package the tg-widget for public installation, create a GitHub repo at <code>twilson63/telegram-widget</code>, and write feature coverage tests that validate all bridge + widget functionality.</p>
+
+<h2>Definition</h2>
+<p><strong>Feature coverage tests</strong> = automated Node.js tests (no browser needed) that verify the <code>telegram-bridge.cjs</code> daemon's core logic: message routing, chat allowlist enforcement, token secret handling, message chunking, conversation history, command parsing, and WebSocket handshake/protocol. The tests use zero external network calls — they mock the Telegram Bot API and test via the localhost WebSocket and internal functions.</p>
+
+<p><strong>What this is NOT:</strong> Not end-to-end tests with a real Telegram bot (those require a bot token and network). Not widget UI tests (those need a browser). Not integration tests with HyperDesk. This is unit + integration test coverage of the bridge daemon's logic.</p>
+
+<h2>Goals</h2>
+<ol>
+<li>Create test suite covering all bridge daemon features</li>
+<li>Set up GitHub repo <code>twilson63/telegram-widget</code> with source + tests</li>
+<li>Update widget ID from <code>tom.telegram</code> to <code>twilson63.telegram</code></li>
+<li>Publish a ZenBin share page for one-command installation</li>
+<li>Update README with test instructions</li>
+</ol>
+
+<h2>Constraints</h2>
+<ul>
+<li>Tests must not require real credentials, network, or a running HyperDesk instance</li>
+<li>Tests must be runnable with <code>npm test</code> from the <code>scripts/</code> directory</li>
+<li>Token secrets must never appear in test output or logs</li>
+<li>No browser automation needed for tests (bridge is Node-only logic)</li>
+</ul>
+
+<h2>Non-goals</h2>
+<ul>
+<li>End-to-end Telegram + HyperDesk integration testing</li>
+<li>UI/component tests for the widget HTML</li>
+<li>Performance or load testing</li>
+<li>Multi-user Telegram bot architecture (v2 scope)</li>
+</ul>
+
+<h2>Step-by-step Plan</h2>
+
+<h3>Step 1: Test Infrastructure</h3>
+<ul>
+<div class="criterion">- Test runner set up: <code>scripts/package.json</code> has <code>"test": "node --test"</code> (Node 22 native test runner) <span class="evidence">run <code>cd scripts && npm test</code> and verify exit 0 with no tests yet</span></div>
+<div class="criterion">- Test helper module created: <code>scripts/test/test-helper.cjs</code> exports utility functions for WS client, mock context, and assertion helpers <span class="evidence">file exists and exports are importable</span></div>
+<div class="criterion">- <code>.gitignore</code> excludes <code>scripts/node_modules/</code>, <code>*.log</code>, test fixtures with tokens <span class="evidence"><code>git status</code> shows clean node_modules</span></div>
+</ul>
+
+<h3>Step 2: Bridge CLI &amp; Config Tests</h3>
+<ul>
+<div class="criterion">- Without token and without <code>--widget-managed</code>, exit code is 1 <span class="evidence">spawn node, verify exitCode === 1 and stderr contains "required"</span></div>
+<div class="criterion">- <code>--help</code> prints usage and exits 0 <span class="evidence">spawn node, verify stdout contains "telegram-bridge"</span></div>
+<div class="criterion">- <code>--version</code> prints version and exits 0 <span class="evidence">spawn node, verify stdout contains "v0.2.0"</span></div>
+<div class="criterion">- <code>TELEGRAM_BOT_TOKEN</code> env var is accepted without <code>--widget-managed</code> <span class="evidence">spawn with env, verify it starts without "ERROR" stderr</span></div>
+</ul>
+
+<h3>Step 3: WebSocket Protocol Tests</h3>
+<ul>
+<div class="criterion">- Bridge starts WS server on localhost <span class="evidence">connect to port 18765, receive <code>bridge:status</code> message</span></div>
+<div class="criterion">- Widget sends <code>bridge:configure</code> with token → bridge starts bot polling <span class="evidence">send config over WS, verify status changes to "configuring" then "running"</span></div>
+<div class="criterion">- Widget sends <code>bridge:stop</code> → bridge stops polling <span class="evidence">send stop, verify status changes to "stopped"</span></div>
+<div class="criterion">- Widget sends <code>bridge:ping</code> → receives <code>bridge:status</code> <span class="evidence">send ping, verify status response</span></div>
+<div class="criterion">- Port auto-increment when 18765 is occupied <span class="evidence">start two instances, verify second uses 18766</span></div>
+</ul>
+
+<h3>Step 4: Message Routing Tests</h3>
+<ul>
+<div class="criterion">- Bridge sends <code>telegram:message</code> to widget on incoming Telegram message <span class="evidence">mock ctx.on("message:text"), verify WS sends correct payload with chatId</span></div>
+<div class="criterion">- Agent response via <code>telegram:message</code> from widget → bridge sends to Telegram <span class="evidence">send <code>telegram:message</code> payload over WS, verify bot.api.sendMessage called with correct chatId</span></div>
+<div class="criterion">- Long responses are split into ≤3500 char chunks <span class="evidence">send 10KB text, verify 3+ sendMessage calls with correct chunk sizes</span></div>
+<div class="criterion">- Unauthorized chat ID (with allowlist) → message silently dropped <span class="evidence">set allowlist, send from different chatId, verify no WS message sent</span></div>
+</ul>
+
+<h3>Step 5: Telegram Commands Tests</h3>
+<ul>
+<div class="criterion">- <code>/start</code> → sends welcome message with chatId/port, sets polling active <span class="evidence">mock ctx, verify api.sendMessage called</span></div>
+<div class="criterion">- <code>/stop</code> → stops polling <span class="evidence">mock ctx while polling, verify stop called and status sent to widget</span></div>
+<div class="criterion">- <code>/status</code> → sends bridge status summary <span class="evidence">mock ctx, verify api.sendMessage with status text</span></div>
+<div class="criterion">- <code>/help</code> → lists available commands <span class="evidence">mock ctx, verify api.sendMessage with help text</span></div>
+</ul>
+
+<h3>Step 6: History &amp; Security Tests</h3>
+<ul>
+<div class="criterion">- Conversation history bounded to 40 messages max (20 exchanges) <span class="evidence">send 25 user messages, verify history.length ≤ 40</span></div>
+<div class="criterion">- Bot token never appears in command line, env, or logs <span class="evidence">grep bridge code: token only flows via WS, never via args/env in --widget-managed mode</span></div>
+<div class="criterion">- Invalid token (401) → error sent to widget, polling stops <span class="evidence">mock bot.catch with 401 error, verify widget gets error status</span></div>
+</ul>
+
+<h3>Step 7: Package &amp; Publish</h3>
+<ul>
+<div class="criterion">- Widget ID updated to <code>twilson63.telegram</code> in manifest <span class="evidence"><code>cat hyperdesk.extension.json | grep id</code></span></div>
+<div class="criterion">- GitHub repo created and pushed <span class="evidence">repo exists at <code>github.com/twilson63/telegram-widget</code></span></div>
+<div class="criterion">- ZenBin share page published <span class="evidence">URL returned from <code>zenbin_publish</code></span></div>
+<div class="criterion">- README updated with test instructions and badge <span class="evidence">README has <code>npm test</code> section</span></div>
+</ul>
+
+<h2>Validator Rubric</h2>
+<table>
+<tr><th>Area</th><th>Check</th></tr>
+<tr><td>Correctness</td><td>Every test passes without flaky behavior</td></tr>
+<tr><td>Secrets</td><td>No tokens in test output, logs, or committed files</td></tr>
+<tr><td>Coverage</td><td>All public bridge functions exercised by at least one test</td></tr>
+<tr><td>Simplicity</td><td>Tests use Node native test runner, no extra dependencies</td></tr>
+<tr><td>Maintainability</td><td>Test files are organized by feature, helpers are shared</td></tr>
+</table>
+
+<h2>Final Acceptance</h2>
+<ul>
+<li>All tests green on <code>cd scripts && npm test</code></li>
+<li>GitHub repo <code>twilson63/telegram-widget</code> exists with source + tests</li>
+<li>Widget ID updated to <code>twilson63.telegram</code></li>
+<li>README documents how to run tests</li>
+</ul>
+
+</body>
+</html>
